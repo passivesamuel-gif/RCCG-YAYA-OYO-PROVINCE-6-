@@ -2,15 +2,12 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useRef 
 import {
   collection,
   doc,
-  getDoc,
   onSnapshot,
   setDoc,
-  deleteDoc,
   updateDoc,
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '../lib/firebase';
-import { supabase } from '../lib/supabase';
+import { db } from '../lib/firebase';
+import { safeFetch } from '../lib/api';
 import { useAuth } from './AuthContext';
 import { Book, ReadingProgress } from '../types/library';
 
@@ -213,15 +210,6 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const isPublished = data.published ?? false;
             const uploadStatus = data.uploadStatus || 'completed';
 
-            // Clean up stuck test book "Spirit heals" or broken records if incomplete
-            if (data.title && String(data.title).toLowerCase().includes('spirit heals') && uploadStatus === 'failed') {
-              // Delete orphaned stuck record in Firestore
-              try {
-                deleteDoc(doc(db, 'books', docSnap.id)).catch(() => {});
-              } catch {}
-              return;
-            }
-
             loaded.push({
               id: docSnap.id,
               title: data.title || 'Untitled Volume',
@@ -412,16 +400,10 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const getSignedUrl = async (storagePath: string): Promise<string> => {
     if (!storagePath) return '';
     try {
-      const res = await fetch(`/api/files/signed-url?path=${encodeURIComponent(storagePath)}`);
-      const data = await res.json();
-      if (res.ok && data.success && data.signedUrl) {
-        return data.signedUrl;
-      }
-      // Fallback
-      const { data: pubData } = supabase.storage
-        .from('library-files')
-        .getPublicUrl(storagePath);
-      return pubData?.publicUrl || '';
+      const res = await safeFetch<{ signedUrl?: string }>(
+        `/api/files/signed-url?path=${encodeURIComponent(storagePath)}`
+      );
+      return res.success ? res.data?.signedUrl || '' : '';
     } catch (e) {
       console.warn('Error fetching signed URL:', e);
       return '';
@@ -440,41 +422,19 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       formData.append('fileType', fileType);
       formData.append('bookId', bookId);
 
-      const res = await fetch('/api/files/upload', {
+      const res = await safeFetch<{ path?: string; signedUrl?: string; confirmedSize?: number }>('/api/files/upload', {
         method: 'POST',
         body: formData,
       });
-
-      const data = await res.json();
-      if (res.ok && data.success && data.path) {
+      if (res.success && res.data?.path) {
         return {
           success: true,
-          path: data.path,
-          signedUrl: data.signedUrl,
-          confirmedSize: data.confirmedSize || file.size,
+          path: res.data.path,
+          signedUrl: res.data.signedUrl,
+          confirmedSize: res.data.confirmedSize || file.size,
         };
       }
-
-      console.warn('[Upload Notice] Primary Supabase server upload failed:', data?.error);
-
-      // Client-side Firebase Storage fallback
-      const folder = fileType === 'cover' ? 'covers' : 'books';
-      const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-      const storagePath = `${folder}/${bookId}/${cleanFileName}`;
-      const storageRef = ref(storage, storagePath);
-
-      await uploadBytes(storageRef, file, {
-        contentType: file.type || (fileType === 'cover' ? 'image/jpeg' : 'application/pdf'),
-      });
-
-      const downloadUrl = await getDownloadURL(storageRef);
-
-      return {
-        success: true,
-        path: storagePath,
-        signedUrl: downloadUrl,
-        confirmedSize: file.size,
-      };
+      return { success: false, error: res.error || 'The file could not be saved. Please try again.' };
     } catch (err: any) {
       console.error('[Upload Error]:', err);
       return {
@@ -488,7 +448,8 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const processBackgroundUpload = async (
     bookId: string,
     pdfFile: File,
-    coverFile?: File | null
+    coverFile: File | null | undefined,
+    metadata: Pick<UploadBookParams, 'title' | 'author' | 'category' | 'description' | 'featured' | 'tags'>
   ) => {
     let pdfStoragePath = '';
     let pdfUrl = '';
@@ -497,27 +458,12 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     // 60-second stall timer
     const stallTimer = setTimeout(async () => {
-      try {
-        const bookRef = doc(db, 'books', bookId);
-        const snap = await getDoc(bookRef);
-        if (snap.exists() && snap.data()?.uploadStatus === 'finishing') {
-          const stallMsg = "This book's file didn't finish uploading.";
-          await updateDoc(bookRef, {
-            uploadStatus: 'failed',
-            uploadError: stallMsg,
-            published: false,
-            updatedAt: Date.now(),
-          });
-          setLastUploadError({
-            message: stallMsg,
-            bookId,
-            timestamp: Date.now(),
-            details: 'Upload timed out after 60 seconds without progress.',
-          });
-        }
-      } catch (e) {
-        console.warn('Upload stall timer notice:', e);
-      }
+      setLastUploadError({
+        message: "This book's file didn't finish uploading.",
+        bookId,
+        timestamp: Date.now(),
+        details: 'Upload timed out after 60 seconds without progress.',
+      });
     }, 60000);
 
     try {
@@ -541,17 +487,25 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       clearTimeout(stallTimer);
 
-      // 3. Mark book as completed & published in Firestore
-      const bookRef = doc(db, 'books', bookId);
-      await updateDoc(bookRef, {
-        pdfUrl,
-        coverUrl,
-        pdfStoragePath,
-        coverStoragePath,
-        published: true,
-        uploadStatus: 'completed',
-        updatedAt: Date.now(),
+      const createResult = await safeFetch('/api/books', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: bookId,
+          ...metadata,
+          pdfUrl,
+          coverUrl,
+          pdfStoragePath,
+          coverStoragePath,
+          pdfSize: pdfRes.confirmedSize,
+          pages: 0,
+          published: true,
+          createdAt: Date.now(),
+          featured: Boolean(metadata.featured),
+          tags: metadata.tags || [],
+        }),
       });
+      if (!createResult.success) throw new Error(createResult.error || 'The book details could not be saved.');
       setLastUploadError(null);
     } catch (err: any) {
       clearTimeout(stallTimer);
@@ -565,17 +519,6 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         details: String(err || errText),
       });
 
-      try {
-        const bookRef = doc(db, 'books', bookId);
-        await updateDoc(bookRef, {
-          uploadStatus: 'failed',
-          uploadError: "This book's file didn't finish uploading.",
-          published: false,
-          updatedAt: Date.now(),
-        });
-      } catch (e) {
-        console.warn('Notice updating book upload status to failed:', e);
-      }
     }
   };
 
@@ -616,28 +559,15 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     try {
       const bookId = `book-${Date.now()}`;
-      const bookRef = doc(db, 'books', bookId);
-
-      const initialBook: Book = {
-        id: bookId,
+      // Start asynchronous background upload
+      processBackgroundUpload(bookId, pdfFile, coverFile, {
         title: title.trim(),
         author: author.trim(),
         category: category.trim(),
         description: description.trim(),
-        pdfUrl: '',
-        coverUrl: '',
-        pages: 0,
-        published: false,
         featured,
         tags,
-        uploadStatus: 'finishing',
-        createdAt: Date.now(),
-      };
-
-      await setDoc(bookRef, initialBook);
-
-      // Start asynchronous background upload
-      processBackgroundUpload(bookId, pdfFile, coverFile);
+      });
 
       return { success: true, bookId };
     } catch (err: any) {
@@ -647,14 +577,17 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const retryBackgroundUpload = async (bookId: string, pdfFile?: File, coverFile?: File | null) => {
-    const bookRef = doc(db, 'books', bookId);
-    await updateDoc(bookRef, {
-      uploadStatus: 'finishing',
-      uploadError: null,
-      updatedAt: Date.now(),
-    });
     if (pdfFile) {
-      processBackgroundUpload(bookId, pdfFile, coverFile);
+      const currentBook = books.find((book) => book.id === bookId);
+      if (!currentBook) return;
+      processBackgroundUpload(bookId, pdfFile, coverFile, {
+        title: currentBook.title,
+        author: currentBook.author,
+        category: currentBook.category,
+        description: currentBook.description,
+        featured: currentBook.featured,
+        tags: currentBook.tags,
+      });
     }
   };
 
@@ -694,9 +627,14 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       }
 
-      const bookRef = doc(db, 'books', bookId);
-      await updateDoc(bookRef, docUpdates);
-      return { success: true };
+      const result = await safeFetch(`/api/books/${encodeURIComponent(bookId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(docUpdates),
+      });
+      return result.success
+        ? { success: true }
+        : { success: false, error: result.error || 'Failed to update book. Please try again.' };
     } catch (err: any) {
       console.error('Failed to update book:', err);
       return { success: false, error: 'Failed to update book. Please try again.' };
@@ -705,26 +643,10 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const removeBook = async (book: Book): Promise<{ success: boolean; error?: string }> => {
     try {
-      if (book.pdfStoragePath) {
-        try {
-          await fetch('/api/files/delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: book.pdfStoragePath }),
-          });
-        } catch {}
-      }
-      if (book.coverStoragePath) {
-        try {
-          await fetch('/api/files/delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: book.coverStoragePath }),
-          });
-        } catch {}
-      }
-      await deleteDoc(doc(db, 'books', book.id));
-      return { success: true };
+      const result = await safeFetch(`/api/books/${encodeURIComponent(book.id)}`, { method: 'DELETE' });
+      return result.success
+        ? { success: true }
+        : { success: false, error: result.error || 'Failed to remove book. Please try again.' };
     } catch (err: any) {
       console.error('Failed to remove book:', err);
       return { success: false, error: 'Failed to remove book. Please try again.' };

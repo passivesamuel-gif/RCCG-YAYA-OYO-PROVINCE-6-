@@ -13,7 +13,6 @@ import {
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../lib/firebase';
 import { UserProfile } from '../types/library';
-import { checkIsAdmin, ADMIN_EMAIL } from '../lib/admin';
 import { safeFetch } from '../lib/api';
 
 export interface AuthAttemptError {
@@ -156,13 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [lastAuthAttemptError, setLastAuthAttemptError] = useState<AuthAttemptError | null>(null);
   const isRegisteringAdminRef = useRef<boolean>(false);
 
-  const [adminVerified, setAdminVerified] = useState<boolean>(() => {
-    try {
-      return sessionStorage.getItem('rccg_admin_verified') === 'true';
-    } catch {
-      return false;
-    }
-  });
+  const [adminVerified, setAdminVerified] = useState<boolean>(false);
 
   // Sync Firebase Auth state
   useEffect(() => {
@@ -186,68 +179,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (userSnap.exists()) {
               const loadedProfile = userSnap.data() as UserProfile;
               setProfile(loadedProfile);
-              if (
-                loadedProfile.role === 'admin' ||
-                checkIsAdmin(currentUser, loadedProfile)
-              ) {
-                setAdminVerified(true);
-                try {
-                  sessionStorage.setItem('rccg_admin_verified', 'true');
-                } catch {}
-              }
             } else {
               // Create default initial profile
               const displayName = currentUser.displayName || '';
               const parts = displayName.trim().split(' ');
               const parsedFirst = parts[0] || currentUser.email?.split('@')[0] || 'Member';
               const parsedLast = parts.slice(1).join(' ') || '';
-              const isDesignatedAdmin = checkIsAdmin(currentUser, null);
-
               const newProfile: UserProfile = {
                 uid: currentUser.uid,
                 firstName: parsedFirst,
                 lastName: parsedLast,
                 name: displayName || parsedFirst,
                 email: currentUser.email || '',
-                role: isDesignatedAdmin ? 'admin' : 'member',
+                role: 'member',
                 createdAt: Date.now(),
               };
               await setDoc(userRef, newProfile);
               setProfile(newProfile);
-              if (isDesignatedAdmin) {
-                setAdminVerified(true);
-                try {
-                  sessionStorage.setItem('rccg_admin_verified', 'true');
-                } catch {}
-              }
             }
           } catch (profileErr) {
             console.warn('Could not sync Firestore profile:', profileErr);
             const displayName = currentUser.displayName || '';
             const parts = displayName.trim().split(' ');
             const parsedFirst = parts[0] || currentUser.email?.split('@')[0] || 'Member';
-            const isDesignatedAdmin = checkIsAdmin(currentUser, null);
-
             setProfile({
               uid: currentUser.uid,
               firstName: parsedFirst,
               lastName: parts.slice(1).join(' ') || '',
               name: displayName || parsedFirst,
               email: currentUser.email || '',
-              role: isDesignatedAdmin ? 'admin' : 'member',
+              role: 'member',
               createdAt: Date.now(),
             });
-            if (isDesignatedAdmin) {
-              setAdminVerified(true);
-            }
           }
         } else {
           setProfile(null);
           setAdminVerified(false);
-          try {
-            sessionStorage.removeItem('rccg_admin_verified');
-            sessionStorage.removeItem('rccg_admin_token');
-          } catch {}
         }
 
         setLoading(false);
@@ -279,8 +246,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const userRef = doc(db, 'users', currentUser.uid);
         const userSnap = await getDoc(userRef);
-        const isDesignatedAdmin = checkIsAdmin(currentUser, null);
-
         if (!userSnap.exists()) {
           const displayName = currentUser.displayName || '';
           const parts = displayName.trim().split(' ');
@@ -293,7 +258,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             lastName: parsedLast,
             name: displayName || parsedFirst,
             email: currentUser.email || '',
-            role: isDesignatedAdmin ? 'admin' : 'member',
+            role: 'member',
             createdAt: Date.now(),
           };
           await setDoc(userRef, newProfile);
@@ -303,12 +268,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setProfile(existing);
         }
 
-        if (isDesignatedAdmin) {
-          setAdminVerified(true);
-          try {
-            sessionStorage.setItem('rccg_admin_verified', 'true');
-          } catch {}
-        }
+        setAdminVerified(false);
       } catch (err) {
         console.warn('Firestore profile write notice:', err);
       }
@@ -323,14 +283,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithEmail = async (email: string, pass: string) => {
     try {
-      const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
-      const isDesignatedAdmin = checkIsAdmin(cred.user, profile);
-      if (isDesignatedAdmin) {
-        setAdminVerified(true);
-        try {
-          sessionStorage.setItem('rccg_admin_verified', 'true');
-        } catch {}
-      }
+      await signInWithEmailAndPassword(auth, email.trim(), pass);
+      setAdminVerified(false);
       setLastAuthAttemptError(null);
       return { success: true };
     } catch (err: any) {
@@ -351,7 +305,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const cleanEmail = email.trim().toLowerCase();
 
-      // Step 1: Pre-verify access password on backend server
+      await signInWithEmailAndPassword(auth, cleanEmail, pass);
+
+      // The server verifies the signed-in Firebase account and the separate access password.
       const checkRes = await safeFetch('/api/admin/verify-signin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -369,33 +325,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
-      // Step 2: Sign in with Firebase Auth
-      const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
-      if (!cred.user) {
-        recordAuthError({ code: 'auth/no-user-returned', message: 'No user credential returned' }, 'admin-verify');
-        return {
-          success: false,
-          error: "We couldn't complete your sign-in. Please check your credentials and try again.",
-        };
-      }
-
-      // Step 3: Set verified status & session token
       setAdminVerified(true);
-      try {
-        sessionStorage.setItem('rccg_admin_verified', 'true');
-        if (checkRes.data?.token) {
-          sessionStorage.setItem('rccg_admin_token', checkRes.data.token);
-        }
-      } catch {}
-
-      // Ensure profile role is marked admin in Firestore
-      try {
-        const userRef = doc(db, 'users', cred.user.uid);
-        await setDoc(userRef, { role: 'admin' }, { merge: true });
-        setProfile((prev) => (prev ? { ...prev, role: 'admin' } : null));
-      } catch (e) {
-        console.warn('Profile admin role note:', e);
-      }
 
       setLastAuthAttemptError(null);
       return { success: true };
@@ -467,12 +397,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('Email verification dispatch notice:', verifyErr);
         }
 
-        // STRICT SECURITY: A new reader MUST NEVER be an administrator automatically!
-        const isDesignatedAdmin = Boolean(
-          ADMIN_EMAIL && email.toLowerCase() === ADMIN_EMAIL.toLowerCase()
-        );
-
-        const assignedRole: 'admin' | 'member' = isDesignatedAdmin ? 'admin' : 'member';
+        const assignedRole: 'member' = 'member';
 
         const userRef = doc(db, 'users', cred.user.uid);
         const newProfile: UserProfile = {
@@ -493,12 +418,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setProfile(newProfile);
         }
 
-        if (isDesignatedAdmin) {
-          setAdminVerified(true);
-          try {
-            sessionStorage.setItem('rccg_admin_verified', 'true');
-          } catch {}
-        }
+        setAdminVerified(false);
       }
 
       setLastAuthAttemptError(null);
@@ -524,27 +444,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: user.email,
           accessPassword: accessPassword.trim(),
         }),
       });
 
       if (res.success && res.data?.verified) {
         setAdminVerified(true);
-        try {
-          sessionStorage.setItem('rccg_admin_verified', 'true');
-          if (res.data?.token) {
-            sessionStorage.setItem('rccg_admin_token', res.data.token);
-          }
-        } catch {}
-
-        if (profile && profile.role !== 'admin') {
-          const updated = { ...profile, role: 'admin' as const };
-          setProfile(updated);
-          try {
-            await setDoc(doc(db, 'users', user.uid), updated, { merge: true });
-          } catch {}
-        }
 
         return { success: true };
       } else {
@@ -568,15 +473,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user?.email) {
       return { success: false, error: 'Not authenticated.' };
     }
-    const token = sessionStorage.getItem('rccg_admin_token') || undefined;
     const res = await safeFetch('/api/admin/update-access-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: user.email,
         currentPassword: currentPassword.trim(),
         newPassword: newPassword.trim(),
-        adminToken: token,
       }),
     });
 
@@ -600,7 +502,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        requestEmail: user.email,
         newAdminEmail: newAdminEmail.trim().toLowerCase(),
         accessPassword: accessPassword.trim(),
       }),
@@ -625,7 +526,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: user.email,
         accessPassword: accessPassword.trim(),
       }),
     });
@@ -724,16 +624,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setProfile(null);
       setAdminVerified(false);
-      try {
-        sessionStorage.removeItem('rccg_admin_verified');
-        sessionStorage.removeItem('rccg_admin_token');
-      } catch {}
     } catch (err) {
       console.error('Error signing out:', err);
     }
   };
 
-  const isAdmin = checkIsAdmin(user, profile);
+  const isAdmin = Boolean(user && adminVerified);
   const userFirstName =
     profile?.firstName ||
     profile?.name?.split(' ')[0] ||
@@ -747,7 +643,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         profile,
         loading,
         isAdmin,
-        adminEmailConfigured: ADMIN_EMAIL,
+        adminEmailConfigured: '',
         adminVerified,
         userFirstName,
         lastAuthAttemptError,
