@@ -6,32 +6,6 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    // -------------------------------------------------------------
-    // Book PDF Documents: /books/{bookId}/{fileName}
-    // Read: Authenticated readers only
-    // Write/Delete: Authenticated users, max 100MB, PDF MIME type
-    // -------------------------------------------------------------
-    match /books/{bookId}/{fileName} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated()
-        && request.resource.size < 100 * 1024 * 1024
-        && request.resource.contentType == 'application/pdf';
-      allow delete: if isAuthenticated();
-    }
-
-    // -------------------------------------------------------------
-    // Book Cover Images: /covers/{bookId}/{fileName}
-    // Read: Authenticated readers only
-    // Write/Delete: Authenticated users, max 10MB, Image MIME types
-    // -------------------------------------------------------------
-    match /covers/{bookId}/{fileName} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated()
-        && request.resource.size < 10 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
-      allow delete: if isAuthenticated();
-    }
-
     // Default Deny
     match /{allPaths=**} {
       allow read, write: if false;
