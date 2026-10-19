@@ -1,0 +1,71 @@
+{
+  "entities": {
+    "Book": {
+      "title": "Book",
+      "description": "Metadata for Christian books in the library",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "author": { "type": "string", "maxLength": 150 },
+        "category": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "coverUrl": { "type": "string" },
+        "coverStoragePath": { "type": "string" },
+        "pdfUrl": { "type": "string" },
+        "pdfStoragePath": { "type": "string" },
+        "pages": { "type": "number" },
+        "published": { "type": "boolean" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["title", "author", "category", "pdfUrl"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["member", "admin"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "ReadingProgress": {
+      "title": "ReadingProgress",
+      "description": "User reading progress for a specific book",
+      "type": "object",
+      "properties": {
+        "bookId": { "type": "string" },
+        "currentPage": { "type": "number" },
+        "totalPages": { "type": "number" },
+        "percentage": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["bookId", "currentPage", "totalPages"]
+    }
+  },
+  "firestore": {
+    "/books/{bookId}": {
+      "schema": { "$ref": "#/entities/Book" },
+      "description": "Catalog of Christian library books readable by authenticated users and writable only by admin."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles readable and editable by user owner, with role strictly member."
+    },
+    "/users/{userId}/progress/{bookId}": {
+      "schema": { "$ref": "#/entities/ReadingProgress" },
+      "description": "Subcollection tracking page progress for each book per user."
+    },
+    "/admins/{adminId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Protected document list of administrator UIDs."
+    }
+  }
+}

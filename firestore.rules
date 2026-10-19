@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if user is an authorized administrator for RCCG YAYA OYO 6
+    function isAdmin() {
+      return isAuthenticated() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email != null &&
+         (request.auth.token.email.lower() == "fixonauts3d@gmail.com".lower() ||
+          request.auth.token.email.lower().matches('.*admin.*') ||
+          request.auth.token.email.lower().matches('.*@rccgyaya.*'))) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+        request.auth.token.admin == true
+      );
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // -------------------------------------------------------------
+    // 1. Books Collection
+    // Readers must be authenticated to browse and read.
+    // Administrators upload, edit, or delete books.
+    // -------------------------------------------------------------
+    match /books/{bookId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAuthenticated();
+    }
+
+    // -------------------------------------------------------------
+    // 2. User Profiles & Reading Progress
+    // Readers can manage their own profile and private reading progress.
+    // -------------------------------------------------------------
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+
+      match /progress/{bookId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 3. Protected Admins Collection
+    // -------------------------------------------------------------
+    match /admins/{adminId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(adminId) || isAdmin();
+    }
+
+    // -------------------------------------------------------------
+    // Default Deny
+    // -------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

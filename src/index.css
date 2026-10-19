@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+@theme {
+  --font-heading: 'Montserrat', sans-serif;
+  --font-sans: 'Open Sans', sans-serif;
+  --color-forest: #123D2A;
+  --color-forest-dark: #0B2519;
+  --color-forest-light: #1A543A;
+  --color-gold: #D4AF65;
+  --color-gold-light: #E8D39E;
+  --color-gold-dark: #B99346;
+  --color-lightgreen: #EEF5F0;
+  --color-ivory: #FAF8F2;
+  --color-charcoal: #252B2A;
+  --color-secondary-text: #737B76;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  font-family: 'Open Sans', system-ui, -apple-system, sans-serif;
+  background-color: #FAF8F2;
+  color: #252B2A;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Montserrat', sans-serif;
+  text-wrap: balance;
+}
+
+/* Custom scrollbar for library catalog and reader */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #EEF5F0;
+}
+::-webkit-scrollbar-thumb {
+  background: #D4AF65;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #B99346;
+}
+
+/* Hero gentle fade and 8px rise on load (respects prefers-reduced-motion) */
+@keyframes heroRise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hero-fade-rise {
+  animation: heroRise 0.65s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-fade-rise {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideBar {
+  0% { left: -30%; }
+  50% { left: 70%; }
+  100% { left: -30%; }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out both;
+}
+
+.animate-slideBar {
+  animation: slideBar 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fadeIn {
+    animation: none;
+    opacity: 1;
+  }
+  .animate-slideBar {
+    animation: none;
+    left: 35%;
+    width: 30%;
+  }
+}
+

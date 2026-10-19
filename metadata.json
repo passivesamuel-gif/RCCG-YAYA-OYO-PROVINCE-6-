@@ -1,0 +1,6 @@
+{
+  "name": "RCCG YAYA OYO PROVINCE 6",
+  "description": "Modern Christian digital library web application for RCCG YAYA Oyo Province 6. Discover, read, and grow with spiritual, leadership, and theological literature.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
