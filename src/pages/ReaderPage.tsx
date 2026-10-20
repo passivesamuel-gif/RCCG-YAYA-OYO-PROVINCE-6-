@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLibrary } from '../context/LibraryContext';
 import { FullPageLoader } from '../components/ui/FullPageLoader';
 import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -24,10 +25,8 @@ import {
 import { Button } from '../components/ui/Button';
 import { safeFetch } from '../lib/api';
 
-// Configure PDF.js worker
-if (typeof window !== 'undefined' && 'Worker' in window) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-}
+// Bundle the matching worker with the app instead of relying on an external CDN.
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 interface SearchMatch {
   pageNumber: number;

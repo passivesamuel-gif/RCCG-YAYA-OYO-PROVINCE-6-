@@ -307,7 +307,11 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const filteredBooks = useMemo(() => {
     // Readers ONLY see published books that have completed upload and are not failed/finishing
     let result = books.filter(
-      (b) => b.published && b.pdfUrl && b.uploadStatus !== 'finishing' && b.uploadStatus !== 'failed'
+      (b) =>
+        b.published &&
+        (b.pdfUrl || b.pdfStoragePath) &&
+        b.uploadStatus !== 'finishing' &&
+        b.uploadStatus !== 'failed'
     );
 
     if (selectedCategory !== 'All') {
