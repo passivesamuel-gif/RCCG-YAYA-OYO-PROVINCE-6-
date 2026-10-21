@@ -247,7 +247,7 @@ export const SignupPage: React.FC = () => {
                 </div>
               )}
 
-              <form onSubmit={handleRegister} className="space-y-4">
+              <form onSubmit={handleRegister} noValidate className="space-y-4">
                 {/* First Name & Last Name */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <Input
