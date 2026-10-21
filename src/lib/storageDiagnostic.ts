@@ -1,4 +1,5 @@
 import { safeFetch } from './api';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 export interface DiagnosticResult {
   success: boolean;
@@ -25,10 +26,8 @@ export async function runStorageDiagnostic(): Promise<DiagnosticResult> {
   };
 
   try {
-    const configRes = await fetch('/firebase-applet-config.json');
-    const config = await configRes.json();
-    const bucket = config.storageBucket || 'gen-lang-client-0628990292.firebasestorage.app';
-    const projectId = config.projectId || 'gen-lang-client-0628990292';
+    const bucket = firebaseConfig.storageBucket || 'Unknown';
+    const projectId = firebaseConfig.projectId || 'Unknown';
 
     let detailsLog = `[PDF Upload Comprehensive Diagnostic]\n`;
     detailsLog += `1. Admin Form PDF Field Connection: CONNECTED (state pdfFile connected to uploadBook params).\n`;

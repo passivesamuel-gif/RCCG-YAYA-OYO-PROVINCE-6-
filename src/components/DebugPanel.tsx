@@ -64,9 +64,10 @@ export const DebugPanel: React.FC = () => {
       const idRes = await fetch('https://identitytoolkit.googleapis.com/$discovery/rest?version=v1', {
         method: 'GET',
         cache: 'no-store',
+        mode: 'no-cors',
       });
-      identityOk = idRes.ok || idRes.status === 200;
-      details += `Identity Toolkit API: ${identityOk ? 'HTTP 200 OK' : 'HTTP ' + idRes.status}\n`;
+      identityOk = idRes.type === 'opaque' || idRes.ok || idRes.status === 200;
+      details += `Identity Toolkit API: ${identityOk ? 'Host reachable (browser CORS prevents reading the response body)' : 'UNAVAILABLE'}\n`;
     } catch (e: any) {
       details += `Identity Toolkit API reachability error: ${e?.message || String(e)}\n`;
     }
@@ -178,7 +179,7 @@ ${serviceStatus.pingDetails}
             <div>
               <p className="font-bold text-amber-300">a) Cover Image Storage Location:</p>
               <p className="text-gray-300 mt-0.5 leading-relaxed">
-                Covers go to private storage (Supabase bucket <code className="text-emerald-300 font-mono">library-files</code> under path <code className="text-emerald-300 font-mono">covers/&lt;bookId&gt;/...</code> with server disk/memory fallback). It works because covers are compressed under 500 KB before upload.
+                Covers go to private storage (Supabase bucket <code className="text-emerald-300 font-mono">library-files</code> under path <code className="text-emerald-300 font-mono">covers/&lt;bookId&gt;/...</code>). They are compressed before upload.
               </p>
             </div>
             <div>
@@ -196,7 +197,7 @@ ${serviceStatus.pingDetails}
             <div>
               <p className="font-bold text-amber-300">d) PDF.js Package Status:</p>
               <p className="text-emerald-400 font-bold mt-0.5">
-                YES (<code className="font-mono">pdfjs-dist ^6.4.299</code> installed and worker configured via CDN).
+                YES (<code className="font-mono">pdfjs-dist ^6.4.299</code> installed and the matching worker bundled locally).
               </p>
             </div>
           </div>

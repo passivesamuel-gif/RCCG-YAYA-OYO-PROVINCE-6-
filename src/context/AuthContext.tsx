@@ -138,6 +138,10 @@ export const mapAuthError = (err: any): string => {
     return 'Network connection error. Please verify your internet connection or check if this domain is authorized in Firebase.';
   }
 
+  if (code.includes('timeout')) {
+    return 'Firebase did not respond within 20 seconds. Please check your connection and try again.';
+  }
+
   if (code.includes('invalid-api-key')) {
     return 'Firebase API key configuration restriction error. Please check your Google Cloud / Firebase API key settings.';
   }
@@ -410,7 +414,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Prevent race conditions with onAuthStateChanged creating an empty profile
       isRegisteringAdminRef.current = true;
 
-      const cred = await createUserWithEmailAndPassword(auth, email.toLowerCase(), pass);
+      setLastAuthAttemptError({
+        code: 'auth/attempt-started',
+        message: 'Email registration request started.',
+        timestamp: Date.now(),
+        type: 'email-signup',
+      });
+
+      const cred = await Promise.race([
+        createUserWithEmailAndPassword(auth, email.toLowerCase(), pass),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject({
+            code: 'auth/timeout',
+            message: 'Firebase email registration timed out after 20 seconds.',
+          }), 20000)
+        ),
+      ]);
       let verificationSent = false;
 
       if (cred.user) {
