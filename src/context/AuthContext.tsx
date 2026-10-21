@@ -3,6 +3,8 @@ import {
   User as FirebaseUser,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -224,6 +226,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     }
 
+    getRedirectResult(auth).catch((err: any) => {
+      const errorRecord: AuthAttemptError = {
+        code: err?.code || 'auth/unknown',
+        message: err?.message || String(err || 'Unknown error'),
+        timestamp: Date.now(),
+        type: 'google',
+      };
+      setLastAuthAttemptError(errorRecord);
+      console.error('[Auth Diagnostic - GOOGLE REDIRECT]', errorRecord);
+    });
+
     return () => unsubscribe();
   }, []);
 
@@ -240,6 +253,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithGoogle = async () => {
     try {
+      const isMobileBrowser =
+        typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+      if (isMobileBrowser) {
+        await signInWithRedirect(auth, googleProvider);
+        return { success: true };
+      }
+
       const result = await signInWithPopup(auth, googleProvider);
       const currentUser = result.user;
 
@@ -276,6 +297,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLastAuthAttemptError(null);
       return { success: true };
     } catch (err: any) {
+      const code = String(err?.code || '').toLowerCase();
+      if (code.includes('popup-blocked') || code.includes('network-request-failed')) {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return { success: true };
+        } catch (redirectErr: any) {
+          recordAuthError(redirectErr, 'google');
+          return { success: false, error: mapAuthError(redirectErr) };
+        }
+      }
       recordAuthError(err, 'google');
       return { success: false, error: mapAuthError(err) };
     }
