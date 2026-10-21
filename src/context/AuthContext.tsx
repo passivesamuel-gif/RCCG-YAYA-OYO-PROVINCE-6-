@@ -5,6 +5,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  signInWithCustomToken,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -31,9 +32,11 @@ export interface AuthContextType {
   isAdmin: boolean;
   adminEmailConfigured: string;
   adminVerified: boolean;
+  readerMembership: boolean;
   userFirstName: string;
   lastAuthAttemptError: AuthAttemptError | null;
   signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
+  signInWithMembershipPasscode: (passcode: string) => Promise<{ success: boolean; error?: string }>;
   signInWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   signInAsAdmin: (
     email: string,
@@ -162,6 +165,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isRegisteringAdminRef = useRef<boolean>(false);
 
   const [adminVerified, setAdminVerified] = useState<boolean>(false);
+  const [readerMembership, setReaderMembership] = useState<boolean>(false);
 
   // Sync Firebase Auth state
   useEffect(() => {
@@ -172,6 +176,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(currentUser);
 
         if (currentUser) {
+          try {
+            const tokenResult = await currentUser.getIdTokenResult();
+            setReaderMembership(tokenResult.claims.reader === true);
+          } catch {
+            setReaderMembership(false);
+          }
           if (isRegisteringAdminRef.current) {
             setLoading(false);
             return;
@@ -221,6 +231,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else {
           setProfile(null);
           setAdminVerified(false);
+          setReaderMembership(false);
         }
 
         setLoading(false);
@@ -313,6 +324,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       recordAuthError(err, 'google');
       return { success: false, error: mapAuthError(err) };
+    }
+  };
+
+  const signInWithMembershipPasscode = async (passcode: string) => {
+    try {
+      const storageKey = 'rccg-reader-device-id';
+      const storedDeviceId = typeof window !== 'undefined' ? window.localStorage.getItem(storageKey) : null;
+      const deviceId = storedDeviceId || (typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      if (typeof window !== 'undefined' && !storedDeviceId) window.localStorage.setItem(storageKey, deviceId);
+      const response = await safeFetch<{ customToken?: string }>('/api/reader/verify-passcode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: passcode.trim(), deviceId }),
+      });
+      if (!response.success || !response.data?.customToken) {
+        return { success: false, error: response.error || 'Membership access could not be verified.' };
+      }
+      await signInWithCustomToken(auth, response.data.customToken);
+      setReaderMembership(true);
+      setAdminVerified(false);
+      setLastAuthAttemptError(null);
+      return { success: true };
+    } catch (err: any) {
+      recordAuthError(err, 'email-signin');
+      return { success: false, error: err?.message || 'Membership access could not be verified.' };
     }
   };
 
@@ -674,6 +712,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setProfile(null);
       setAdminVerified(false);
+      setReaderMembership(false);
     } catch (err) {
       console.error('Error signing out:', err);
     }
@@ -695,9 +734,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAdmin,
         adminEmailConfigured: '',
         adminVerified,
+        readerMembership,
         userFirstName,
         lastAuthAttemptError,
         signInWithGoogle,
+        signInWithMembershipPasscode,
         signInWithEmail,
         signInAsAdmin,
         signUpWithEmail,

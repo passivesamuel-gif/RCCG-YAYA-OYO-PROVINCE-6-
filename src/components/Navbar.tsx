@@ -123,7 +123,7 @@ export const Navbar: React.FC = () => {
                   onClick={() => navigate('/signup')}
                   className="px-5 py-2.5 text-white bg-[#123D2A] hover:bg-[#1A543A] uppercase tracking-wider transition-colors rounded-xs shadow-xs cursor-pointer min-h-[40px]"
                 >
-                  Create Free Account
+                  Reader Access
                 </button>
               </nav>
             )}
@@ -225,7 +225,7 @@ export const Navbar: React.FC = () => {
                 }}
                 className="w-full py-3 text-center text-xs font-bold uppercase tracking-wider text-white bg-[#123D2A] rounded-xs min-h-[44px]"
               >
-                Create Free Account
+                Reader Access
               </button>
             </div>
           )}

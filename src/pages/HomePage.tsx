@@ -74,7 +74,7 @@ export const HomePage: React.FC = () => {
 
               {/* Warm, Clear Paragraph */}
               <p className="text-base sm:text-lg text-[#252B2A]/85 leading-relaxed max-w-xl font-normal">
-                A Christian library published by RCCG YAYA Oyo Province 6, open to everyone. Deepen your faith, build your character, and read Christ-centred literature online anytime.
+                A Christian library published by RCCG YAYA Oyo Province 6 for approved readers. Deepen your faith, build your character, and read Christ-centred literature online anytime.
               </p>
 
               {/* Primary & Secondary Action Pair (Full-width on mobile) */}
@@ -86,7 +86,7 @@ export const HomePage: React.FC = () => {
                   onClick={() => navigate('/signup')}
                   icon={<ArrowRight className="w-4 h-4 text-[#D4AF65]" />}
                 >
-                  Create Free Account
+                  Reader Access
                 </Button>
 
                 <Button
@@ -101,7 +101,7 @@ export const HomePage: React.FC = () => {
 
               {/* Audience Welcoming Line - Open to everyone */}
               <p className="text-xs text-[#737B76] pt-1 leading-relaxed">
-                A Christian library from RCCG YAYA Oyo Province 6, open to everyone. Create a free account to start reading.
+                Enter your reader membership passcode to start reading.
               </p>
             </div>
 
@@ -190,12 +190,12 @@ export const HomePage: React.FC = () => {
             </div>
             <div className="md:col-span-4">
               <h3 className="font-heading font-bold text-lg text-[#123D2A]">
-                Create your free account
+                Enter your membership passcode
               </h3>
             </div>
             <div className="md:col-span-6">
               <p className="text-sm text-[#737B76] leading-relaxed">
-                Sign up with your email and password, or continue with Google in seconds.
+                Use your reader membership passcode, or continue with Google if you already use a Google account.
               </p>
             </div>
           </div>
@@ -301,7 +301,7 @@ export const HomePage: React.FC = () => {
             Start Reading Today
           </h3>
           <p className="text-xs sm:text-sm text-[#737B76] max-w-md mx-auto leading-relaxed">
-            Create your free account to access Christian books published by RCCG YAYA Oyo Province 6, open to all readers.
+            Enter your reader membership passcode to access Christian books published by RCCG YAYA Oyo Province 6.
           </p>
           <div className="pt-2 flex flex-col sm:flex-row justify-center gap-3">
             <Button
@@ -311,7 +311,7 @@ export const HomePage: React.FC = () => {
               onClick={() => navigate('/signup')}
               icon={<ArrowRight className="w-3.5 h-3.5 text-[#D4AF65]" />}
             >
-              Create Free Account
+              Reader Access
             </Button>
             <Button
               variant="secondary"
