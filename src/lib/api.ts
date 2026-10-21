@@ -1,3 +1,5 @@
+import { auth } from './firebase';
+
 /**
  * Safe client API caller for RCCG YAYA OYO 6 E-Library.
  * Guarantees zero "Unexpected token '<', <html>... is not valid JSON" errors.
@@ -29,11 +31,13 @@ export async function safeFetch<T = any>(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
       headers: {
         'Accept': 'application/json',
+        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
         ...(options.headers || {}),
       },
     });

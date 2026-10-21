@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLibrary } from '../context/LibraryContext';
 import { FullPageLoader } from '../components/ui/FullPageLoader';
 import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -22,11 +23,10 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
+import { safeFetch } from '../lib/api';
 
-// Configure PDF.js worker
-if (typeof window !== 'undefined' && 'Worker' in window) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-}
+// Bundle the matching worker with the app instead of relying on an external CDN.
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 interface SearchMatch {
   pageNumber: number;
@@ -36,11 +36,12 @@ interface SearchMatch {
 export const ReaderPage: React.FC = () => {
   const { params, navigate } = useRouter();
   const { user, loading: authLoading } = useAuth();
-  const { getBookById, getProgressForBook, saveProgress, updateBookPageCount } = useLibrary();
+  const { getBookById, getProgressForBook, saveProgress } = useLibrary();
 
   const bookId = params.bookId || params.id || '';
   const contextBook = bookId ? getBookById(bookId) : undefined;
   const [directBook, setDirectBook] = useState<Book | null>(null);
+  const [pdfUrl, setPdfUrl] = useState<string>('');
 
   // Direct fetch fallback for direct URLs
   useEffect(() => {
@@ -75,6 +76,23 @@ export const ReaderPage: React.FC = () => {
 
   const book = contextBook || directBook || undefined;
 
+  useEffect(() => {
+    let cancelled = false;
+    setPdfUrl('');
+    if (!book) return;
+    if (book.pdfUrl) {
+      setPdfUrl(book.pdfUrl);
+      return;
+    }
+    if (book.pdfStoragePath) {
+      safeFetch<{ signedUrl?: string }>(`/api/files/signed-url?path=${encodeURIComponent(book.pdfStoragePath)}`)
+        .then((result) => {
+          if (!cancelled && result.success && result.data?.signedUrl) setPdfUrl(result.data.signedUrl);
+        });
+    }
+    return () => { cancelled = true; };
+  }, [book?.id, book?.pdfUrl, book?.pdfStoragePath]);
+
   // Auth gate check
   useEffect(() => {
     if (!authLoading && !user) {
@@ -108,7 +126,7 @@ export const ReaderPage: React.FC = () => {
 
   // Load PDF Document
   const loadPdfDocument = () => {
-    if (!book || !book.pdfUrl) {
+    if (!book || !pdfUrl) {
       setLoadingPdf(false);
       return;
     }
@@ -117,7 +135,7 @@ export const ReaderPage: React.FC = () => {
     setPdfError(null);
 
     const loadTask = pdfjsLib.getDocument({
-      url: book.pdfUrl,
+      url: pdfUrl,
       withCredentials: false,
     });
 
@@ -125,10 +143,6 @@ export const ReaderPage: React.FC = () => {
       .then((doc) => {
         pdfDocRef.current = doc;
         setTotalPages(doc.numPages);
-
-        if (!book.pages || book.pages !== doc.numPages) {
-          updateBookPageCount(book.id, doc.numPages);
-        }
 
         const initialPage = existingProgress?.currentPage && existingProgress.currentPage <= doc.numPages
           ? existingProgress.currentPage
@@ -148,7 +162,7 @@ export const ReaderPage: React.FC = () => {
 
   useEffect(() => {
     loadPdfDocument();
-  }, [book?.pdfUrl, book?.id]);
+  }, [pdfUrl, book?.id]);
 
   // Render Current Page onto Canvas
   useEffect(() => {

@@ -7,19 +7,6 @@ service cloud.firestore {
     }
 
     // Check if user is an authorized administrator for RCCG YAYA OYO 6
-    function isAdmin() {
-      return isAuthenticated() && (
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        (request.auth.token.email != null &&
-         (request.auth.token.email.lower() == "fixonauts3d@gmail.com".lower() ||
-          request.auth.token.email.lower().matches('.*admin.*') ||
-          request.auth.token.email.lower().matches('.*@rccgyaya.*'))) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
-        request.auth.token.admin == true
-      );
-    }
-
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
@@ -31,7 +18,7 @@ service cloud.firestore {
     // -------------------------------------------------------------
     match /books/{bookId} {
       allow read: if isAuthenticated();
-      allow create, update, delete: if isAuthenticated();
+      allow create, update, delete: if false;
     }
 
     // -------------------------------------------------------------
@@ -39,9 +26,11 @@ service cloud.firestore {
     // Readers can manage their own profile and private reading progress.
     // -------------------------------------------------------------
     match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isOwner(userId) || isAdmin();
-      allow delete: if isAdmin();
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && request.resource.data.role == 'member' && request.resource.data.uid == userId;
+      allow update: if isOwner(userId) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'uid', 'email', 'createdAt']));
+      allow delete: if false;
 
       match /progress/{bookId} {
         allow read, write: if isOwner(userId);
@@ -52,8 +41,7 @@ service cloud.firestore {
     // 3. Protected Admins Collection
     // -------------------------------------------------------------
     match /admins/{adminId} {
-      allow read: if isAuthenticated();
-      allow write: if isOwner(adminId) || isAdmin();
+      allow read, write: if false;
     }
 
     // -------------------------------------------------------------

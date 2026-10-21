@@ -44,6 +44,7 @@ export const LoginPage: React.FC = () => {
   // Standard Reader Form Submission
   const handleReaderSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setErrorMessage(null);
 
     if (!email.trim() || !password) {
@@ -52,19 +53,24 @@ export const LoginPage: React.FC = () => {
     }
 
     setIsSubmitting(true);
-    const result = await signInWithEmail(email.trim(), password);
-    setIsSubmitting(false);
-
-    if (result.success) {
-      navigate(redirectTarget);
-    } else {
-      setErrorMessage(result.error || 'Sign-in failed. Please check your credentials and try again.');
+    try {
+      const result = await signInWithEmail(email.trim(), password);
+      if (result.success) {
+        navigate(redirectTarget);
+      } else {
+        setErrorMessage(result.error || 'Sign-in failed. Please check your credentials and try again.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Sign-in failed. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   // Dedicated YAYA Oyo 6 Administrator Sign-In
   const handleAdminSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setErrorMessage(null);
 
     if (!adminEmail.trim() || !adminPassword || !adminAccessPassword.trim()) {
@@ -73,17 +79,21 @@ export const LoginPage: React.FC = () => {
     }
 
     setIsSubmitting(true);
-    const result = await signInAsAdmin(
-      adminEmail.trim(),
-      adminPassword,
-      adminAccessPassword.trim()
-    );
-    setIsSubmitting(false);
-
-    if (result.success) {
-      navigate('/admin');
-    } else {
-      setErrorMessage(result.error || 'Administrator verification failed. Please verify credentials.');
+    try {
+      const result = await signInAsAdmin(
+        adminEmail.trim(),
+        adminPassword,
+        adminAccessPassword.trim()
+      );
+      if (result.success) {
+        navigate('/admin');
+      } else {
+        setErrorMessage(result.error || 'Administrator verification failed. Please verify credentials.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Administrator verification failed.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -91,13 +101,19 @@ export const LoginPage: React.FC = () => {
   const handleGoogleSignIn = async () => {
     setErrorMessage(null);
     setIsSubmitting(true);
-    const result = await signInWithGoogle();
-    setIsSubmitting(false);
-
-    if (result.success) {
-      navigate(redirectTarget);
-    } else {
-      setErrorMessage(result.error || 'Google sign-in could not be completed. Please try again.');
+    try {
+      const result = await signInWithGoogle();
+      if (result.success) {
+        if (!result.redirecting) {
+          navigate(redirectTarget);
+        }
+      } else {
+        setErrorMessage(result.error || 'Google sign-in could not be completed. Please try again.');
+        setIsSubmitting(false);
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Google sign-in failed. Please try again.');
+      setIsSubmitting(false);
     }
   };
 

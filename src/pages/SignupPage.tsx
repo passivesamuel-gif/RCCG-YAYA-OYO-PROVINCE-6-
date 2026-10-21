@@ -46,6 +46,7 @@ export const SignupPage: React.FC = () => {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setErrorMessage(null);
 
     const validationError = validateForm();
@@ -55,31 +56,42 @@ export const SignupPage: React.FC = () => {
     }
 
     setIsSubmitting(true);
-    const result = await signUpWithEmail(
-      email.trim(),
-      password,
-      firstName.trim(),
-      lastName.trim()
-    );
-    setIsSubmitting(false);
+    try {
+      const result = await signUpWithEmail(
+        email.trim(),
+        password,
+        firstName.trim(),
+        lastName.trim()
+      );
 
-    if (result.success) {
-      setEmailSentScreen(true);
-    } else {
-      setErrorMessage(result.error || 'Account creation could not be completed. Please try again.');
+      if (result.success) {
+        setEmailSentScreen(true);
+      } else {
+        setErrorMessage(result.error || 'Account creation could not be completed. Please try again.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Account creation could not be completed. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleGoogleSignUp = async () => {
     setErrorMessage(null);
     setIsSubmitting(true);
-    const result = await signInWithGoogle();
-    setIsSubmitting(false);
-
-    if (result.success) {
-      navigate(redirectTarget);
-    } else {
-      setErrorMessage(result.error || 'Google registration could not be completed. Please try again.');
+    try {
+      const result = await signInWithGoogle();
+      if (result.success) {
+        if (!result.redirecting) {
+          navigate(redirectTarget);
+        }
+      } else {
+        setErrorMessage(result.error || 'Google registration could not be completed. Please try again.');
+        setIsSubmitting(false);
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Google registration could not be completed. Please try again.');
+      setIsSubmitting(false);
     }
   };
 
@@ -247,7 +259,7 @@ export const SignupPage: React.FC = () => {
                 </div>
               )}
 
-              <form onSubmit={handleRegister} className="space-y-4">
+              <form onSubmit={handleRegister} noValidate className="space-y-4">
                 {/* First Name & Last Name */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <Input

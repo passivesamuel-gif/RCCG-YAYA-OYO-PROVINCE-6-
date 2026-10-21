@@ -3,6 +3,8 @@ import {
   User as FirebaseUser,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -13,7 +15,6 @@ import {
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../lib/firebase';
 import { UserProfile } from '../types/library';
-import { checkIsAdmin, ADMIN_EMAIL } from '../lib/admin';
 import { safeFetch } from '../lib/api';
 
 export interface AuthAttemptError {
@@ -32,7 +33,7 @@ export interface AuthContextType {
   adminVerified: boolean;
   userFirstName: string;
   lastAuthAttemptError: AuthAttemptError | null;
-  signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
+  signInWithGoogle: () => Promise<{ success: boolean; redirecting?: boolean; error?: string }>;
   signInWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   signInAsAdmin: (
     email: string,
@@ -137,6 +138,10 @@ export const mapAuthError = (err: any): string => {
     return 'Network connection error. Please verify your internet connection or check if this domain is authorized in Firebase.';
   }
 
+  if (code.includes('timeout')) {
+    return 'Firebase did not respond within 20 seconds. Please check your connection and try again.';
+  }
+
   if (code.includes('invalid-api-key')) {
     return 'Firebase API key configuration restriction error. Please check your Google Cloud / Firebase API key settings.';
   }
@@ -156,18 +161,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [lastAuthAttemptError, setLastAuthAttemptError] = useState<AuthAttemptError | null>(null);
   const isRegisteringAdminRef = useRef<boolean>(false);
 
-  const [adminVerified, setAdminVerified] = useState<boolean>(() => {
-    try {
-      return sessionStorage.getItem('rccg_admin_verified') === 'true';
-    } catch {
-      return false;
-    }
-  });
+  const [adminVerified, setAdminVerified] = useState<boolean>(false);
 
-  // Sync Firebase Auth state
+  // Sync Firebase Auth state and handle Google Redirect return result
   useEffect(() => {
     let unsubscribe: () => void = () => {};
+    let isMounted = true;
 
+    // 1. Process Google Sign-In Redirect return result on page load / mount
+    const handleRedirectResult = async () => {
+      try {
+        const result = await getRedirectResult(auth);
+        if (result && result.user && isMounted) {
+          const currentUser = result.user;
+          const userRef = doc(db, 'users', currentUser.uid);
+          const userSnap = await getDoc(userRef);
+
+          if (!userSnap.exists()) {
+            const displayName = currentUser.displayName || '';
+            const parts = displayName.trim().split(' ');
+            const parsedFirst = parts[0] || currentUser.email?.split('@')[0] || 'Member';
+            const parsedLast = parts.slice(1).join(' ') || '';
+
+            const newProfile: UserProfile = {
+              uid: currentUser.uid,
+              firstName: parsedFirst,
+              lastName: parsedLast,
+              name: displayName || parsedFirst,
+              email: currentUser.email?.toLowerCase() || '',
+              role: 'member', // Strictly member role
+              createdAt: Date.now(),
+            };
+            await setDoc(userRef, newProfile);
+            if (isMounted) setProfile(newProfile);
+          } else {
+            const existing = userSnap.data() as UserProfile;
+            if (isMounted) setProfile(existing);
+          }
+          if (isMounted) setLastAuthAttemptError(null);
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          const errorRecord: AuthAttemptError = {
+            code: err?.code || 'auth/unknown',
+            message: err?.message || String(err || 'Unknown error'),
+            timestamp: Date.now(),
+            type: 'google',
+          };
+          setLastAuthAttemptError(errorRecord);
+          console.error('[Auth Diagnostic - GOOGLE REDIRECT]', errorRecord);
+        }
+      }
+    };
+
+    handleRedirectResult();
+
+    // 2. Listen for Auth State changes
     try {
       unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
         setUser(currentUser);
@@ -186,68 +235,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (userSnap.exists()) {
               const loadedProfile = userSnap.data() as UserProfile;
               setProfile(loadedProfile);
-              if (
-                loadedProfile.role === 'admin' ||
-                checkIsAdmin(currentUser, loadedProfile)
-              ) {
-                setAdminVerified(true);
-                try {
-                  sessionStorage.setItem('rccg_admin_verified', 'true');
-                } catch {}
-              }
             } else {
-              // Create default initial profile
+              // Create default member profile if missing
               const displayName = currentUser.displayName || '';
               const parts = displayName.trim().split(' ');
               const parsedFirst = parts[0] || currentUser.email?.split('@')[0] || 'Member';
               const parsedLast = parts.slice(1).join(' ') || '';
-              const isDesignatedAdmin = checkIsAdmin(currentUser, null);
-
               const newProfile: UserProfile = {
                 uid: currentUser.uid,
                 firstName: parsedFirst,
                 lastName: parsedLast,
                 name: displayName || parsedFirst,
-                email: currentUser.email || '',
-                role: isDesignatedAdmin ? 'admin' : 'member',
+                email: currentUser.email?.toLowerCase() || '',
+                role: 'member', // Always member role
                 createdAt: Date.now(),
               };
               await setDoc(userRef, newProfile);
               setProfile(newProfile);
-              if (isDesignatedAdmin) {
-                setAdminVerified(true);
-                try {
-                  sessionStorage.setItem('rccg_admin_verified', 'true');
-                } catch {}
-              }
             }
           } catch (profileErr) {
             console.warn('Could not sync Firestore profile:', profileErr);
             const displayName = currentUser.displayName || '';
             const parts = displayName.trim().split(' ');
             const parsedFirst = parts[0] || currentUser.email?.split('@')[0] || 'Member';
-            const isDesignatedAdmin = checkIsAdmin(currentUser, null);
-
             setProfile({
               uid: currentUser.uid,
               firstName: parsedFirst,
               lastName: parts.slice(1).join(' ') || '',
               name: displayName || parsedFirst,
-              email: currentUser.email || '',
-              role: isDesignatedAdmin ? 'admin' : 'member',
+              email: currentUser.email?.toLowerCase() || '',
+              role: 'member',
               createdAt: Date.now(),
             });
-            if (isDesignatedAdmin) {
-              setAdminVerified(true);
-            }
           }
         } else {
           setProfile(null);
           setAdminVerified(false);
-          try {
-            sessionStorage.removeItem('rccg_admin_verified');
-            sessionStorage.removeItem('rccg_admin_token');
-          } catch {}
         }
 
         setLoading(false);
@@ -257,7 +280,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     }
 
-    return () => unsubscribe();
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   const recordAuthError = (err: any, type: AuthAttemptError['type']) => {
@@ -271,50 +297,77 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     console.error(`[Auth Diagnostic - ${type.toUpperCase()}]`, errorRecord);
   };
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = async (): Promise<{ success: boolean; redirecting?: boolean; error?: string }> => {
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const currentUser = result.user;
+      const isMobileBrowser =
+        typeof navigator !== 'undefined' &&
+        (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 768);
 
-      try {
-        const userRef = doc(db, 'users', currentUser.uid);
-        const userSnap = await getDoc(userRef);
-        const isDesignatedAdmin = checkIsAdmin(currentUser, null);
-
-        if (!userSnap.exists()) {
-          const displayName = currentUser.displayName || '';
-          const parts = displayName.trim().split(' ');
-          const parsedFirst = parts[0] || 'Member';
-          const parsedLast = parts.slice(1).join(' ') || '';
-
-          const newProfile: UserProfile = {
-            uid: currentUser.uid,
-            firstName: parsedFirst,
-            lastName: parsedLast,
-            name: displayName || parsedFirst,
-            email: currentUser.email || '',
-            role: isDesignatedAdmin ? 'admin' : 'member',
-            createdAt: Date.now(),
-          };
-          await setDoc(userRef, newProfile);
-          setProfile(newProfile);
-        } else {
-          const existing = userSnap.data() as UserProfile;
-          setProfile(existing);
-        }
-
-        if (isDesignatedAdmin) {
-          setAdminVerified(true);
-          try {
-            sessionStorage.setItem('rccg_admin_verified', 'true');
-          } catch {}
-        }
-      } catch (err) {
-        console.warn('Firestore profile write notice:', err);
+      if (isMobileBrowser) {
+        setLastAuthAttemptError({
+          code: 'auth/redirecting',
+          message: 'Redirecting to Google sign-in...',
+          timestamp: Date.now(),
+          type: 'google',
+        });
+        await signInWithRedirect(auth, googleProvider);
+        return { success: true, redirecting: true };
       }
 
-      setLastAuthAttemptError(null);
-      return { success: true };
+      try {
+        const result = await signInWithPopup(auth, googleProvider);
+        const currentUser = result.user;
+
+        if (currentUser) {
+          const userRef = doc(db, 'users', currentUser.uid);
+          const userSnap = await getDoc(userRef);
+
+          if (!userSnap.exists()) {
+            const displayName = currentUser.displayName || '';
+            const parts = displayName.trim().split(' ');
+            const parsedFirst = parts[0] || currentUser.email?.split('@')[0] || 'Member';
+            const parsedLast = parts.slice(1).join(' ') || '';
+
+            const newProfile: UserProfile = {
+              uid: currentUser.uid,
+              firstName: parsedFirst,
+              lastName: parsedLast,
+              name: displayName || parsedFirst,
+              email: currentUser.email?.toLowerCase() || '',
+              role: 'member',
+              createdAt: Date.now(),
+            };
+            await setDoc(userRef, newProfile);
+            setProfile(newProfile);
+          } else {
+            const existing = userSnap.data() as UserProfile;
+            setProfile(existing);
+          }
+        }
+
+        setAdminVerified(false);
+        setLastAuthAttemptError(null);
+        return { success: true };
+      } catch (popupErr: any) {
+        const code = String(popupErr?.code || '').toLowerCase();
+        if (
+          code.includes('popup-blocked') ||
+          code.includes('popup-closed') ||
+          code.includes('cancelled') ||
+          code.includes('network-request-failed')
+        ) {
+          console.warn('Google popup auth unavailable, falling back to redirect:', popupErr);
+          setLastAuthAttemptError({
+            code: 'auth/redirecting',
+            message: 'Popup unavailable; redirecting to Google sign-in...',
+            timestamp: Date.now(),
+            type: 'google',
+          });
+          await signInWithRedirect(auth, googleProvider);
+          return { success: true, redirecting: true };
+        }
+        throw popupErr;
+      }
     } catch (err: any) {
       recordAuthError(err, 'google');
       return { success: false, error: mapAuthError(err) };
@@ -323,14 +376,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithEmail = async (email: string, pass: string) => {
     try {
-      const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
-      const isDesignatedAdmin = checkIsAdmin(cred.user, profile);
-      if (isDesignatedAdmin) {
-        setAdminVerified(true);
-        try {
-          sessionStorage.setItem('rccg_admin_verified', 'true');
-        } catch {}
-      }
+      await Promise.race([
+        signInWithEmailAndPassword(auth, email.trim(), pass),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject({
+                code: 'auth/timeout',
+                message: 'Firebase email sign-in timed out after 20 seconds. Please check your connection.',
+              }),
+            20000
+          )
+        ),
+      ]);
+      setAdminVerified(false);
       setLastAuthAttemptError(null);
       return { success: true };
     } catch (err: any) {
@@ -351,7 +410,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const cleanEmail = email.trim().toLowerCase();
 
-      // Step 1: Pre-verify access password on backend server
+      await signInWithEmailAndPassword(auth, cleanEmail, pass);
+
+      // The server verifies the signed-in Firebase account and the separate access password.
       const checkRes = await safeFetch('/api/admin/verify-signin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -369,33 +430,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
-      // Step 2: Sign in with Firebase Auth
-      const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
-      if (!cred.user) {
-        recordAuthError({ code: 'auth/no-user-returned', message: 'No user credential returned' }, 'admin-verify');
-        return {
-          success: false,
-          error: "We couldn't complete your sign-in. Please check your credentials and try again.",
-        };
-      }
-
-      // Step 3: Set verified status & session token
       setAdminVerified(true);
-      try {
-        sessionStorage.setItem('rccg_admin_verified', 'true');
-        if (checkRes.data?.token) {
-          sessionStorage.setItem('rccg_admin_token', checkRes.data.token);
-        }
-      } catch {}
-
-      // Ensure profile role is marked admin in Firestore
-      try {
-        const userRef = doc(db, 'users', cred.user.uid);
-        await setDoc(userRef, { role: 'admin' }, { merge: true });
-        setProfile((prev) => (prev ? { ...prev, role: 'admin' } : null));
-      } catch (e) {
-        console.warn('Profile admin role note:', e);
-      }
 
       setLastAuthAttemptError(null);
       return { success: true };
@@ -449,7 +484,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Prevent race conditions with onAuthStateChanged creating an empty profile
       isRegisteringAdminRef.current = true;
 
-      const cred = await createUserWithEmailAndPassword(auth, email.toLowerCase(), pass);
+      setLastAuthAttemptError({
+        code: 'auth/attempt-started',
+        message: 'Email registration request started.',
+        timestamp: Date.now(),
+        type: 'email-signup',
+      });
+
+      const cred = await Promise.race([
+        createUserWithEmailAndPassword(auth, email.toLowerCase(), pass),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject({
+            code: 'auth/timeout',
+            message: 'Firebase email registration timed out after 20 seconds.',
+          }), 20000)
+        ),
+      ]);
       let verificationSent = false;
 
       if (cred.user) {
@@ -467,12 +517,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('Email verification dispatch notice:', verifyErr);
         }
 
-        // STRICT SECURITY: A new reader MUST NEVER be an administrator automatically!
-        const isDesignatedAdmin = Boolean(
-          ADMIN_EMAIL && email.toLowerCase() === ADMIN_EMAIL.toLowerCase()
-        );
-
-        const assignedRole: 'admin' | 'member' = isDesignatedAdmin ? 'admin' : 'member';
+        const assignedRole: 'member' = 'member';
 
         const userRef = doc(db, 'users', cred.user.uid);
         const newProfile: UserProfile = {
@@ -493,12 +538,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setProfile(newProfile);
         }
 
-        if (isDesignatedAdmin) {
-          setAdminVerified(true);
-          try {
-            sessionStorage.setItem('rccg_admin_verified', 'true');
-          } catch {}
-        }
+        setAdminVerified(false);
       }
 
       setLastAuthAttemptError(null);
@@ -524,27 +564,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: user.email,
           accessPassword: accessPassword.trim(),
         }),
       });
 
       if (res.success && res.data?.verified) {
         setAdminVerified(true);
-        try {
-          sessionStorage.setItem('rccg_admin_verified', 'true');
-          if (res.data?.token) {
-            sessionStorage.setItem('rccg_admin_token', res.data.token);
-          }
-        } catch {}
-
-        if (profile && profile.role !== 'admin') {
-          const updated = { ...profile, role: 'admin' as const };
-          setProfile(updated);
-          try {
-            await setDoc(doc(db, 'users', user.uid), updated, { merge: true });
-          } catch {}
-        }
 
         return { success: true };
       } else {
@@ -568,15 +593,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user?.email) {
       return { success: false, error: 'Not authenticated.' };
     }
-    const token = sessionStorage.getItem('rccg_admin_token') || undefined;
     const res = await safeFetch('/api/admin/update-access-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: user.email,
         currentPassword: currentPassword.trim(),
         newPassword: newPassword.trim(),
-        adminToken: token,
       }),
     });
 
@@ -600,7 +622,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        requestEmail: user.email,
         newAdminEmail: newAdminEmail.trim().toLowerCase(),
         accessPassword: accessPassword.trim(),
       }),
@@ -625,7 +646,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: user.email,
         accessPassword: accessPassword.trim(),
       }),
     });
@@ -724,16 +744,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setProfile(null);
       setAdminVerified(false);
-      try {
-        sessionStorage.removeItem('rccg_admin_verified');
-        sessionStorage.removeItem('rccg_admin_token');
-      } catch {}
     } catch (err) {
       console.error('Error signing out:', err);
     }
   };
 
-  const isAdmin = checkIsAdmin(user, profile);
+  const isAdmin = Boolean(user && adminVerified);
   const userFirstName =
     profile?.firstName ||
     profile?.name?.split(' ')[0] ||
@@ -747,7 +763,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         profile,
         loading,
         isAdmin,
-        adminEmailConfigured: ADMIN_EMAIL,
+        adminEmailConfigured: '',
         adminVerified,
         userFirstName,
         lastAuthAttemptError,
