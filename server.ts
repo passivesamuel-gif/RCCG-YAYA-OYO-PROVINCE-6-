@@ -18,7 +18,6 @@ const requiredEnvironment = [
   'ADMIN_EMAIL',
   'ADMIN_ACCESS_PASSWORD_HASH',
   'AUTHORIZED_ADMIN_EMAILS',
-  'READER_MEMBERSHIP_PASSCODE_HASH',
 ];
 const missingEnvironment = requiredEnvironment.filter((name) => !process.env[name]?.trim());
 if (missingEnvironment.length > 0) {
@@ -43,7 +42,6 @@ const INITIAL_APPROVED_EMAILS = new Set(
 INITIAL_APPROVED_EMAILS.add(PRIMARY_ADMIN_EMAIL);
 const SECURITY_DOC = adminDb.collection('serverSettings').doc('security');
 const storageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-const membershipFailures = new Map<string, { count: number; resetAt: number }>();
 
 interface SecuritySettings {
   mainAdminEmail: string;
@@ -129,31 +127,6 @@ async function confirmStoredFile(storagePath: string, expectedSize: number) {
 
 app.use(express.json({ limit: '1mb' }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', app: 'RCCG YAYA OYO 6 E-Library' }));
-
-app.post('/api/reader/verify-passcode', async (req, res) => {
-  const passcode = String(req.body?.passcode || '');
-  const deviceId = String(req.body?.deviceId || '').trim();
-  const clientKey = req.ip || 'unknown-client';
-  const now = Date.now();
-  const failure = membershipFailures.get(clientKey);
-  if (failure && failure.resetAt > now && failure.count >= 5) {
-    return res.status(429).json({ success: false, error: 'Too many incorrect attempts. Please wait 15 minutes and try again.' });
-  }
-  if (!/^[A-Za-z0-9_-]{16,128}$/.test(deviceId) || !passcode) {
-    return res.status(400).json({ success: false, error: 'Please enter your reader membership passcode.' });
-  }
-  if (!verifyAccessPassword(passcode, process.env.READER_MEMBERSHIP_PASSCODE_HASH!)) {
-    const nextFailure = failure && failure.resetAt > now
-      ? { count: failure.count + 1, resetAt: failure.resetAt }
-      : { count: 1, resetAt: now + 15 * 60 * 1000 };
-    membershipFailures.set(clientKey, nextFailure);
-    return res.status(401).json({ success: false, error: 'That membership passcode is not correct.' });
-  }
-  membershipFailures.delete(clientKey);
-  const readerUid = `reader-${crypto.createHash('sha256').update(deviceId).digest('hex').slice(0, 40)}`;
-  const customToken = await adminAuth.createCustomToken(readerUid, { reader: true });
-  return res.json({ success: true, customToken });
-});
 
 app.post('/api/admin/verify-signin', authenticate, async (req: AuthenticatedRequest, res) => {
   const { email, accessPassword } = req.body || {};

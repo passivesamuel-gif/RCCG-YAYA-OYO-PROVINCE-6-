@@ -5,9 +5,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
-  signInWithCustomToken,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   sendEmailVerification,
   sendPasswordResetEmail,
   signOut,
@@ -32,23 +30,15 @@ export interface AuthContextType {
   isAdmin: boolean;
   adminEmailConfigured: string;
   adminVerified: boolean;
-  readerMembership: boolean;
   userFirstName: string;
   lastAuthAttemptError: AuthAttemptError | null;
   signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
-  signInWithMembershipPasscode: (passcode: string) => Promise<{ success: boolean; error?: string }>;
   signInWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   signInAsAdmin: (
     email: string,
     pass: string,
     accessPassword: string
   ) => Promise<{ success: boolean; error?: string }>;
-  signUpWithEmail: (
-    email: string,
-    pass: string,
-    firstName?: string,
-    lastName?: string
-  ) => Promise<{ success: boolean; verificationSent?: boolean; error?: string }>;
   verifyAdminAccess: (accessPassword: string) => Promise<{ success: boolean; error?: string }>;
   updateAdminAccessPassword: (
     currentPassword: string,
@@ -165,7 +155,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isRegisteringAdminRef = useRef<boolean>(false);
 
   const [adminVerified, setAdminVerified] = useState<boolean>(false);
-  const [readerMembership, setReaderMembership] = useState<boolean>(false);
 
   // Sync Firebase Auth state
   useEffect(() => {
@@ -176,12 +165,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(currentUser);
 
         if (currentUser) {
-          try {
-            const tokenResult = await currentUser.getIdTokenResult();
-            setReaderMembership(tokenResult.claims.reader === true);
-          } catch {
-            setReaderMembership(false);
-          }
           if (isRegisteringAdminRef.current) {
             setLoading(false);
             return;
@@ -231,7 +214,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else {
           setProfile(null);
           setAdminVerified(false);
-          setReaderMembership(false);
         }
 
         setLoading(false);
@@ -327,33 +309,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signInWithMembershipPasscode = async (passcode: string) => {
-    try {
-      const storageKey = 'rccg-reader-device-id';
-      const storedDeviceId = typeof window !== 'undefined' ? window.localStorage.getItem(storageKey) : null;
-      const deviceId = storedDeviceId || (typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-      if (typeof window !== 'undefined' && !storedDeviceId) window.localStorage.setItem(storageKey, deviceId);
-      const response = await safeFetch<{ customToken?: string }>('/api/reader/verify-passcode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passcode: passcode.trim(), deviceId }),
-      });
-      if (!response.success || !response.data?.customToken) {
-        return { success: false, error: response.error || 'Membership access could not be verified.' };
-      }
-      await signInWithCustomToken(auth, response.data.customToken);
-      setReaderMembership(true);
-      setAdminVerified(false);
-      setLastAuthAttemptError(null);
-      return { success: true };
-    } catch (err: any) {
-      recordAuthError(err, 'email-signin');
-      return { success: false, error: err?.message || 'Membership access could not be verified.' };
-    }
-  };
-
   const signInWithEmail = async (email: string, pass: string) => {
     try {
       await signInWithEmailAndPassword(auth, email.trim(), pass);
@@ -405,117 +360,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err: any) {
       recordAuthError(err, 'admin-verify');
       return { success: false, error: mapAuthError(err) };
-    }
-  };
-
-  const signUpWithEmail = async (
-    arg1: string,
-    arg2: string,
-    arg3?: string,
-    arg4?: string
-  ): Promise<{ success: boolean; verificationSent?: boolean; error?: string }> => {
-    try {
-      let email = '';
-      let pass = '';
-      let firstName = '';
-      let lastName = '';
-
-      // Determine argument positions dynamically
-      if (arg1 && arg1.includes('@')) {
-        email = arg1.trim();
-        pass = arg2 || '';
-        firstName = (arg3 || '').trim();
-        lastName = (arg4 || '').trim();
-      } else if (arg3 && arg3.includes('@')) {
-        firstName = (arg1 || '').trim();
-        lastName = (arg2 || '').trim();
-        email = arg3.trim();
-        pass = arg4 || '';
-      } else {
-        email = (arg1 || '').trim();
-        pass = arg2 || '';
-        firstName = (arg3 || '').trim();
-        lastName = (arg4 || '').trim();
-      }
-
-      if (!email || !email.includes('@')) {
-        return { success: false, error: 'Please enter a valid email address.' };
-      }
-      if (!pass || pass.length < 6) {
-        return { success: false, error: 'Password must be at least 6 characters in length.' };
-      }
-
-      const cleanFirst = firstName || email.split('@')[0] || 'Member';
-      const cleanLast = lastName;
-      const fullName = `${cleanFirst} ${cleanLast}`.trim();
-
-      // Prevent race conditions with onAuthStateChanged creating an empty profile
-      isRegisteringAdminRef.current = true;
-
-      setLastAuthAttemptError({
-        code: 'auth/attempt-started',
-        message: 'Email registration request started.',
-        timestamp: Date.now(),
-        type: 'email-signup',
-      });
-
-      const cred = await Promise.race([
-        createUserWithEmailAndPassword(auth, email.toLowerCase(), pass),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject({
-            code: 'auth/timeout',
-            message: 'Firebase email registration timed out after 20 seconds.',
-          }), 20000)
-        ),
-      ]);
-      let verificationSent = false;
-
-      if (cred.user) {
-        try {
-          await updateProfile(cred.user, { displayName: fullName });
-        } catch (profileErr) {
-          console.warn('Could not set displayName on Firebase user:', profileErr);
-        }
-
-        // Send email verification as required by Step 4
-        try {
-          await sendEmailVerification(cred.user);
-          verificationSent = true;
-        } catch (verifyErr) {
-          console.warn('Email verification dispatch notice:', verifyErr);
-        }
-
-        const assignedRole: 'member' = 'member';
-
-        const userRef = doc(db, 'users', cred.user.uid);
-        const newProfile: UserProfile = {
-          uid: cred.user.uid,
-          firstName: cleanFirst,
-          lastName: cleanLast,
-          name: fullName,
-          email: email.toLowerCase(),
-          role: assignedRole,
-          createdAt: Date.now(),
-        };
-
-        try {
-          await setDoc(userRef, newProfile, { merge: true });
-          setProfile(newProfile);
-        } catch (docErr) {
-          console.warn('Firestore profile save warning:', docErr);
-          setProfile(newProfile);
-        }
-
-        setAdminVerified(false);
-      }
-
-      setLastAuthAttemptError(null);
-      return { success: true, verificationSent };
-    } catch (err: any) {
-      recordAuthError(err, 'email-signup');
-      return { success: false, error: mapAuthError(err) };
-    } finally {
-      isRegisteringAdminRef.current = false;
     }
   };
 
@@ -712,7 +556,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setProfile(null);
       setAdminVerified(false);
-      setReaderMembership(false);
     } catch (err) {
       console.error('Error signing out:', err);
     }
@@ -734,14 +577,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAdmin,
         adminEmailConfigured: '',
         adminVerified,
-        readerMembership,
         userFirstName,
         lastAuthAttemptError,
         signInWithGoogle,
-        signInWithMembershipPasscode,
         signInWithEmail,
         signInAsAdmin,
-        signUpWithEmail,
         verifyAdminAccess,
         updateAdminAccessPassword,
         authorizeAdminEmail,
