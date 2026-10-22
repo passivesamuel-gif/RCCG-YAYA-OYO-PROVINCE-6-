@@ -251,14 +251,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signInWithGoogle = async () => {
     try {
       await authPersistenceReady;
-      const isMobileBrowser =
-        typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-      if (isMobileBrowser) {
-        await signInWithRedirect(auth, googleProvider);
-        return { success: true };
-      }
-
+      // Popup returns the completed Firebase credential directly, avoiding the
+      // mobile redirect callback loop seen on some Render/Firebase combinations.
       const result = await signInWithPopup(auth, googleProvider);
       const currentUser = result.user;
 
@@ -287,10 +281,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setProfile(existing);
         }
 
-        await refreshGoogleAdminStatus();
       } catch (err) {
         console.warn('Firestore profile write notice:', err);
       }
+
+      await refreshGoogleAdminStatus();
 
       setLastAuthAttemptError(null);
       return { success: true };
