@@ -157,7 +157,7 @@ export const AdminPage: React.FC = () => {
   }
 
   // If administrator access password is not verified for current session, show prompt
-  if (!adminVerified) {
+  if (false && !adminVerified) {
     const handleVerifySubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!accessPasswordInput.trim()) return;
@@ -484,17 +484,6 @@ export const AdminPage: React.FC = () => {
           <span>Books ({books.length})</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('security')}
-          className={`py-3 transition-colors border-b-2 -mb-[1px] cursor-pointer flex items-center gap-2 ${
-            activeTab === 'security'
-              ? 'border-[#123D2A] text-[#123D2A]'
-              : 'border-transparent text-[#737B76] hover:text-[#252B2A]'
-          }`}
-        >
-          <ShieldCheck className="w-4 h-4 text-[#123D2A]" />
-          <span>Admin Access</span>
-        </button>
       </div>
 
       {/* Global Notifications */}

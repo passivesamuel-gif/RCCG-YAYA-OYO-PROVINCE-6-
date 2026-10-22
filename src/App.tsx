@@ -6,12 +6,6 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { FullPageLoader } from './components/ui/FullPageLoader';
-import { runStorageDiagnostic } from './lib/storageDiagnostic';
-
-// Expose developer test in browser console
-if (typeof window !== 'undefined') {
-  (window as any).testStorageUpload = runStorageDiagnostic;
-}
 
 // Pages
 import { HomePage } from './pages/HomePage';
@@ -20,20 +14,17 @@ import { BookDetailPage } from './pages/BookDetailPage';
 import { ReaderPage } from './pages/ReaderPage';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
-import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { AdminPage } from './pages/AdminPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
-import { DebugPanel } from './components/DebugPanel';
 
 const AppContent: React.FC = () => {
-  const { path, search } = useRouter();
+  const { path } = useRouter();
   const { loading: authLoading, user } = useAuth();
 
   const isReader = path.startsWith('/read/');
-  const showDebugPanel = typeof window !== 'undefined' && (search.includes('debug=1') || window.location.search.includes('debug=1'));
 
   // Initial loading state to prevent flash of content or premature redirect
   if (authLoading) {
@@ -53,10 +44,6 @@ const AppContent: React.FC = () => {
     if (path === '/signup') {
       return <SignupPage />;
     }
-    if (path === '/forgot-password') {
-      return <ForgotPasswordPage />;
-    }
-
     // 3. Strict Auth Guard for all Library, Reading, and Admin Routes
     const isProtectedRoute =
       path === '/library' ||
@@ -97,7 +84,6 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FAF8F2] text-[#252B2A]">
-      {showDebugPanel && <DebugPanel />}
       <Navbar />
       <main className="flex-1">
         {renderCurrentView()}

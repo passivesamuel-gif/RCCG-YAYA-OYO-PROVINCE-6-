@@ -127,6 +127,11 @@ async function confirmStoredFile(storagePath: string, expectedSize: number) {
 
 app.use(express.json({ limit: '1mb' }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', app: 'RCCG YAYA OYO 6 E-Library' }));
+app.get('/api/admin/google-status', authenticate, async (req: AuthenticatedRequest, res) => {
+  const email = req.firebaseUser?.email?.toLowerCase() || '';
+  const settings = await getSecuritySettings();
+  return res.json({ success: true, isAdmin: Boolean(email && settings.approvedEmails.includes(email)) });
+});
 
 app.post('/api/admin/verify-signin', authenticate, async (req: AuthenticatedRequest, res) => {
   const { email, accessPassword } = req.body || {};

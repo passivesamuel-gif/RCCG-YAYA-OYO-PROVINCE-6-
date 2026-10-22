@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
   User as FirebaseUser,
   onAuthStateChanged,
@@ -152,9 +152,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [lastAuthAttemptError, setLastAuthAttemptError] = useState<AuthAttemptError | null>(null);
-  const isRegisteringAdminRef = useRef<boolean>(false);
 
   const [adminVerified, setAdminVerified] = useState<boolean>(false);
+
+  const refreshGoogleAdminStatus = async () => {
+    const response = await safeFetch<{ isAdmin?: boolean }>('/api/admin/google-status');
+    setAdminVerified(Boolean(response.success && response.data?.isAdmin));
+  };
 
   // Sync Firebase Auth state
   useEffect(() => {
@@ -165,11 +169,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(currentUser);
 
         if (currentUser) {
-          if (isRegisteringAdminRef.current) {
-            setLoading(false);
-            return;
-          }
-
           try {
             // Load user profile from Firestore: /users/{uid}
             const userRef = doc(db, 'users', currentUser.uid);
@@ -211,6 +210,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               createdAt: Date.now(),
             });
           }
+          await refreshGoogleAdminStatus();
         } else {
           setProfile(null);
           setAdminVerified(false);
@@ -286,7 +286,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setProfile(existing);
         }
 
-        setAdminVerified(false);
+        await refreshGoogleAdminStatus();
       } catch (err) {
         console.warn('Firestore profile write notice:', err);
       }
