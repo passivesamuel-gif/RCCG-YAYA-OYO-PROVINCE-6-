@@ -275,37 +275,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signInWithGoogle = async () => {
     try {
       await authPersistenceReady;
-      // Clear the restored Firebase user first so the Google chooser always opens.
-      // The provider prompt below also prevents silent reuse of the last Google account.
-      if (auth.currentUser) await signOut(auth);
-      const isMobileBrowser = /Android|iPhone|iPad|iPod/i.test(window.navigator.userAgent);
-      if (isMobileBrowser) {
-        // Mobile Chrome can leave the popup handler blank; a full-page redirect
-        // is Firebase's reliable mobile flow and still shows Google's chooser.
-        await signInWithRedirect(auth, googleProvider);
-        return { success: true };
-      }
-      // Use the working Firebase consent popup so Google can show the account
-      // chooser and ask the user to approve access to this app.
-      const popupAttempt = signInWithPopup(auth, googleProvider);
-      // Some mobile browsers leave the Firebase popup handler blank instead of
-      // rejecting it. Fall back to the normal redirect after a short wait.
-      popupAttempt.catch(() => undefined);
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      // Popup returns the completed Firebase credential directly, avoiding the
+      // mobile redirect callback loop seen on some Render/Firebase combinations.
+      const result = await signInWithPopup(auth, googleProvider);
+      const currentUser = result.user;
+
       try {
-        await Promise.race([
-          popupAttempt,
-          new Promise<never>((_, reject) => {
-            timeoutId = setTimeout(() => reject({ code: 'auth/popup-timeout' }), 8000);
-          }),
-        ]);
-      } finally {
-        if (timeoutId) clearTimeout(timeoutId);
+        const userRef = doc(db, 'users', currentUser.uid);
+        const userSnap = await getDoc(userRef);
+        if (!userSnap.exists()) {
+          const displayName = currentUser.displayName || '';
+          const parts = displayName.trim().split(' ');
+          const parsedFirst = parts[0] || 'Member';
+          const parsedLast = parts.slice(1).join(' ') || '';
+
+          const newProfile: UserProfile = {
+            uid: currentUser.uid,
+            firstName: parsedFirst,
+            lastName: parsedLast,
+            name: displayName || parsedFirst,
+            email: currentUser.email || '',
+            role: 'member',
+            createdAt: Date.now(),
+          };
+          await setDoc(userRef, newProfile);
+          setProfile(newProfile);
+        } else {
+          const existing = userSnap.data() as UserProfile;
+          setProfile(existing);
+        }
+
+      } catch (err) {
+        console.warn('Firestore profile write notice:', err);
       }
+
+      await refreshGoogleAdminStatus();
+
+      setLastAuthAttemptError(null);
       return { success: true };
     } catch (err: any) {
       const code = String(err?.code || '').toLowerCase();
-      if (code.includes('popup-timeout') || code.includes('popup-blocked') || code.includes('network-request-failed')) {
+      if (code.includes('popup-blocked') || code.includes('network-request-failed')) {
         try {
           await signInWithRedirect(auth, googleProvider);
           return { success: true };
