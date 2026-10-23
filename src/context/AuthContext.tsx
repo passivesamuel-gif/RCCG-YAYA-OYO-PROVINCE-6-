@@ -280,11 +280,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (auth.currentUser) await signOut(auth);
       // Use the working Firebase consent popup so Google can show the account
       // chooser and ask the user to approve access to this app.
-      await signInWithPopup(auth, googleProvider);
+      const popupAttempt = signInWithPopup(auth, googleProvider);
+      // Some mobile browsers leave the Firebase popup handler blank instead of
+      // rejecting it. Fall back to the normal redirect after a short wait.
+      popupAttempt.catch(() => undefined);
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          popupAttempt,
+          new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => reject({ code: 'auth/popup-timeout' }), 8000);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
       return { success: true };
     } catch (err: any) {
       const code = String(err?.code || '').toLowerCase();
-      if (code.includes('popup-blocked') || code.includes('network-request-failed')) {
+      if (code.includes('popup-timeout') || code.includes('popup-blocked') || code.includes('network-request-failed')) {
         try {
           await signInWithRedirect(auth, googleProvider);
           return { success: true };
