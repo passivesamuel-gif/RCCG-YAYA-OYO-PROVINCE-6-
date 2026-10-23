@@ -689,11 +689,12 @@ export const AdminPage: React.FC = () => {
                             </button>
                             <button
                               onClick={() => setDeleteConfirmBook(b)}
-                              className="p-1.5 text-[#737B76] hover:text-rose-600 rounded-xs transition-colors cursor-pointer"
+                              className="inline-flex items-center gap-1 px-2 py-1.5 text-[#737B76] hover:text-rose-600 hover:bg-rose-50 rounded-xs transition-colors cursor-pointer"
                               title="Delete Volume"
                               aria-label="Delete Volume"
                             >
                               <Trash2 className="w-4 h-4" />
+                              <span className="hidden sm:inline text-[10px] font-semibold">Delete</span>
                             </button>
                           </div>
                         </td>

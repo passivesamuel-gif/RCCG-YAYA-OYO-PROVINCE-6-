@@ -688,7 +688,10 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(docUpdates),
       });
-      if (result.success) return { success: true };
+      if (result.success) {
+        refetchBooks();
+        return { success: true };
+      }
       await cleanupReplacementFiles();
       return { success: false, error: result.error || 'Failed to update book. Please try again.' };
     } catch (err: any) {
@@ -701,9 +704,11 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const removeBook = async (book: Book): Promise<{ success: boolean; error?: string }> => {
     try {
       const result = await safeFetch(`/api/books/${encodeURIComponent(book.id)}`, { method: 'DELETE' });
-      return result.success
-        ? { success: true }
-        : { success: false, error: result.error || 'Failed to remove book. Please try again.' };
+      if (result.success) {
+        refetchBooks();
+        return { success: true };
+      }
+      return { success: false, error: result.error || 'Failed to remove book. Please try again.' };
     } catch (err: any) {
       console.error('Failed to remove book:', err);
       return { success: false, error: 'Failed to remove book. Please try again.' };
