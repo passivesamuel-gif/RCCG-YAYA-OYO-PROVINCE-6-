@@ -187,8 +187,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(currentUser);
 
         if (currentUser) {
-          await currentUser.getIdToken(true);
-          setAdminTokenRefreshed(true);
           try {
             // Load user profile from Firestore: /users/{uid}
             const userRef = doc(db, 'users', currentUser.uid);
