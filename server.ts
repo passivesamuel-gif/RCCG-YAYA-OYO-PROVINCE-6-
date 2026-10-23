@@ -29,7 +29,8 @@ const adminApp = getApps().length > 0
   ? getApps()[0]
   : initializeAdminApp({ credential: cert(serviceAccount) });
 const adminAuth = getAdminAuth(adminApp);
-const adminDb = getFirestore(adminApp);
+const FIRESTORE_DATABASE_ID = process.env.FIRESTORE_DATABASE_ID?.trim() || 'ai-studio-rccgyayaoyo6elib-7c2298e8-76db-4b17-86ec-6931d03fd03c';
+const adminDb = getFirestore(adminApp, FIRESTORE_DATABASE_ID);
 const supabaseAdmin = createSupabaseClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
 const app = express();
