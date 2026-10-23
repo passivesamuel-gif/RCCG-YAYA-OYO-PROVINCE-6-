@@ -32,6 +32,7 @@ export interface AuthContextType {
   adminVerified: boolean;
   userFirstName: string;
   lastAuthAttemptError: AuthAttemptError | null;
+  lastAdminCheck: { status: number; success: boolean; isAdmin: boolean; message: string } | null;
   signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
   signInWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   signInAsAdmin: (
@@ -153,11 +154,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState<boolean>(true);
   const [lastAuthAttemptError, setLastAuthAttemptError] = useState<AuthAttemptError | null>(null);
 
+  const [lastAdminCheck, setLastAdminCheck] = useState<AuthContextType['lastAdminCheck']>(null);
   const [adminVerified, setAdminVerified] = useState<boolean>(false);
 
   const refreshGoogleAdminStatus = async () => {
     const response = await safeFetch<{ isAdmin?: boolean }>('/api/admin/google-status');
     setAdminVerified(Boolean(response.success && response.data?.isAdmin));
+    setLastAdminCheck({
+      status: response.status ?? 0,
+      success: response.success,
+      isAdmin: response.data?.isAdmin === true,
+      message: response.success
+        ? (response.data?.isAdmin ? 'The server returned administrator: yes.' : 'The server returned administrator: no.')
+        : response.error || 'The administrator check did not complete.',
+    });
   };
 
   // Sync Firebase Auth state
@@ -214,6 +224,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else {
           setProfile(null);
           setAdminVerified(false);
+          setLastAdminCheck(null);
         }
 
         setLoading(false);
@@ -575,6 +586,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         adminVerified,
         userFirstName,
         lastAuthAttemptError,
+        lastAdminCheck,
         signInWithGoogle,
         signInWithEmail,
         signInAsAdmin,

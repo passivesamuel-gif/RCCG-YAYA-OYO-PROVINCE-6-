@@ -8,6 +8,7 @@ import { getAuth as getAdminAuth, DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import multer from 'multer';
+import { describeAdminCheck } from './app/adminDiagnostics';
 
 dotenv.config();
 
@@ -127,6 +128,22 @@ async function confirmStoredFile(storagePath: string, expectedSize: number) {
 
 app.use(express.json({ limit: '1mb' }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', app: 'RCCG YAYA OYO 6 E-Library' }));
+app.get('/api/admin/diagnostics', authenticate, async (req: AuthenticatedRequest, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (req.query.debug !== '1') return res.status(404).json({ success: false, error: 'Not found.' });
+  try {
+    const settings = await getSecuritySettings();
+    const snapshot = await SECURITY_DOC.get();
+    return res.json({
+      success: true,
+      ...describeAdminCheck(req.firebaseUser!, settings.approvedEmails, snapshot.exists),
+      deployment: process.env.RENDER_GIT_COMMIT?.slice(0, 12) || 'Not reported by hosting',
+      configurationPresent: requiredEnvironment.every((name) => Boolean(process.env[name]?.trim())),
+    });
+  } catch {
+    return res.status(503).json({ success: false, error: 'The administrator check could not read the saved settings.' });
+  }
+});
 app.get('/api/admin/google-status', authenticate, async (req: AuthenticatedRequest, res) => {
   const email = req.firebaseUser?.email?.toLowerCase() || '';
   const settings = await getSecuritySettings();
