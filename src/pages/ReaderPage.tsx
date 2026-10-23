@@ -79,7 +79,13 @@ export const ReaderPage: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     setPdfUrl('');
-    if (!book) return;
+    setPdfError(null);
+    setLoadingPdf(true);
+    if (!book) {
+      setLoadingPdf(false);
+      setPdfError('This book could not be found in the library.');
+      return () => { cancelled = true; };
+    }
     if (book.pdfUrl) {
       setPdfUrl(book.pdfUrl);
       return;
@@ -87,8 +93,16 @@ export const ReaderPage: React.FC = () => {
     if (book.pdfStoragePath) {
       safeFetch<{ signedUrl?: string }>(`/api/files/signed-url?path=${encodeURIComponent(book.pdfStoragePath)}`)
         .then((result) => {
-          if (!cancelled && result.success && result.data?.signedUrl) setPdfUrl(result.data.signedUrl);
+          if (cancelled) return;
+          if (result.success && result.data?.signedUrl) setPdfUrl(result.data.signedUrl);
+          else {
+            setLoadingPdf(false);
+            setPdfError(result.error || 'The PDF file could not be retrieved. Please contact the administrator.');
+          }
         });
+    } else {
+      setLoadingPdf(false);
+      setPdfError('This book does not have a valid PDF file yet. Please contact the administrator.');
     }
     return () => { cancelled = true; };
   }, [book?.id, book?.pdfUrl, book?.pdfStoragePath]);

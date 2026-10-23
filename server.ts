@@ -205,6 +205,19 @@ async function confirmStoredFile(storagePath: string, expectedSize: number) {
   if (actualSize !== expectedSize) throw new Error('The book file could not be confirmed.');
   return actualSize;
 }
+async function confirmStoredObject(storagePath: string) {
+  const { data, error } = await supabaseAdmin.storage.from(BUCKET_NAME).download(storagePath);
+  if (error || !data) throw new Error('The uploaded cover could not be confirmed.');
+  const actualSize = (await data.arrayBuffer()).byteLength;
+  if (actualSize <= 0) throw new Error('The uploaded cover could not be confirmed.');
+  return actualSize;
+}
+async function removeStoredPaths(paths: Array<string | null | undefined>) {
+  const safePaths = paths.map((value) => value ? safeStoragePath(value) : null).filter(Boolean) as string[];
+  if (!safePaths.length) return;
+  const { error } = await supabaseAdmin.storage.from(BUCKET_NAME).remove(Array.from(new Set(safePaths)));
+  if (error) console.warn('Storage cleanup was incomplete', { paths: safePaths, message: error.message });
+}
 
 app.use(express.json({ limit: '1mb' }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', app: 'RCCG YAYA OYO 6 E-Library' }));
@@ -303,6 +316,7 @@ app.post('/api/admin/list-authorized', authenticate, requireAdmin, async (req: A
 });
 
 app.post('/api/files/upload', authenticateOptional, requireAdmin, storageUpload.single('file'), async (req: AuthenticatedRequest, res) => {
+  let uploadedPath = '';
   try {
     if (!req.file) return res.status(400).json({ success: false, error: 'Please choose a file.' });
     const fileType = req.body.fileType === 'cover' ? 'cover' : 'pdf';
@@ -316,9 +330,11 @@ app.post('/api/files/upload', authenticateOptional, requireAdmin, storageUpload.
     const storagePath = `${fileType === 'pdf' ? 'books' : 'covers'}/${bookId}/${cleanName}`;
     const { error } = await supabaseAdmin.storage.from(BUCKET_NAME).upload(storagePath, req.file.buffer, { contentType: fileType === 'pdf' ? 'application/pdf' : req.file.mimetype, upsert: true });
     if (error) throw error;
+    uploadedPath = storagePath;
     const confirmedSize = await confirmStoredFile(storagePath, req.file.size);
     return res.json({ success: true, path: storagePath, signedUrl: await issueSignedUrl(storagePath), confirmedSize });
   } catch (error) {
+    await removeStoredPaths([uploadedPath]);
     console.error('File upload failed', { message: error instanceof Error ? error.message : 'unknown' });
     return res.status(500).json({ success: false, error: 'The file could not be saved. Please try again.' });
   }
@@ -347,22 +363,45 @@ app.post('/api/files/delete', authenticateOptional, requireAdmin, async (req: Au
 app.post('/api/books', authenticateOptional, requireAdmin, async (req: AuthenticatedRequest, res) => {
   const bookId = safeBookId(req.body?.id);
   const pdfStoragePath = safeStoragePath(req.body?.pdfStoragePath);
-  const coverStoragePath = req.body?.coverStoragePath ? safeStoragePath(req.body.coverStoragePath) : null;
-  if (!bookId || !req.body?.title || !req.body?.author || !req.body?.category || !pdfStoragePath || !pdfStoragePath.startsWith(`books/${bookId}/`) || (req.body.coverStoragePath && (!coverStoragePath || !coverStoragePath.startsWith(`covers/${bookId}/`)))) return res.status(400).json({ success: false, error: 'Please complete the book details.' });
-  const confirmedSize = await confirmStoredFile(pdfStoragePath, Number(req.body.pdfSize));
-  const book = { ...req.body, id: bookId, pdfStoragePath, coverStoragePath: coverStoragePath || '', pdfSize: confirmedSize, pdfUrl: '', coverUrl: '', published: true, uploadStatus: 'completed', updatedAt: Date.now() };
-  await adminDb.collection('books').doc(bookId).set(book);
-  return res.json({ success: true, book });
+  const coverStoragePath = safeStoragePath(req.body?.coverStoragePath);
+  if (!bookId || !req.body?.title || !req.body?.author || !req.body?.category || !pdfStoragePath || !coverStoragePath || !pdfStoragePath.startsWith(`books/${bookId}/`) || !coverStoragePath.startsWith(`covers/${bookId}/`)) return res.status(400).json({ success: false, error: 'A title, author, category, PDF, and cover image are required.' });
+  try {
+    const confirmedSize = await confirmStoredFile(pdfStoragePath, Number(req.body.pdfSize));
+    const confirmedCoverSize = await confirmStoredObject(coverStoragePath);
+    const book = { ...req.body, id: bookId, pdfStoragePath, coverStoragePath, pdfSize: confirmedSize, coverSize: confirmedCoverSize, pdfUrl: '', coverUrl: '', published: Boolean(req.body.published), uploadStatus: 'completed', updatedAt: Date.now() };
+    await adminDb.collection('books').doc(bookId).set(book);
+    return res.json({ success: true, book });
+  } catch (error) {
+    await removeStoredPaths([pdfStoragePath, coverStoragePath]);
+    console.error('Book metadata persistence failed', { bookId, message: error instanceof Error ? error.message : 'unknown' });
+    return res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'The book could not be published.' });
+  }
 });
 app.patch('/api/books/:bookId', authenticateOptional, requireAdmin, async (req: AuthenticatedRequest, res) => {
   const bookId = safeBookId(req.params.bookId);
   if (!bookId) return res.status(400).json({ success: false, error: 'The book could not be identified.' });
   const ref = adminDb.collection('books').doc(bookId); const snapshot = await ref.get();
   if (!snapshot.exists) return res.status(404).json({ success: false, error: 'The book could not be found.' });
+  const existing = snapshot.data() || {};
   const updates = { ...req.body, updatedAt: Date.now() };
   if (updates.pdfStoragePath) updates.pdfStoragePath = safeStoragePath(updates.pdfStoragePath);
   if (updates.coverStoragePath) updates.coverStoragePath = safeStoragePath(updates.coverStoragePath);
-  await ref.update(updates); return res.json({ success: true });
+  const nextPdfPath = updates.pdfStoragePath || existing.pdfStoragePath;
+  const nextCoverPath = updates.coverStoragePath || existing.coverStoragePath;
+  if (!nextPdfPath || !nextCoverPath) return res.status(400).json({ success: false, error: 'A book must have both a PDF and a cover image.' });
+  try {
+    if (updates.pdfStoragePath) await confirmStoredObject(updates.pdfStoragePath);
+    if (updates.coverStoragePath) await confirmStoredObject(updates.coverStoragePath);
+    await ref.update({ ...updates, pdfStoragePath: nextPdfPath, coverStoragePath: nextCoverPath, published: updates.published === undefined ? existing.published : Boolean(updates.published), uploadStatus: 'completed' });
+    await removeStoredPaths([
+      updates.pdfStoragePath && existing.pdfStoragePath !== updates.pdfStoragePath ? existing.pdfStoragePath : null,
+      updates.coverStoragePath && existing.coverStoragePath !== updates.coverStoragePath ? existing.coverStoragePath : null,
+    ]);
+    return res.json({ success: true });
+  } catch (error) {
+    await removeStoredPaths([updates.pdfStoragePath, updates.coverStoragePath]);
+    return res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'The book could not be updated.' });
+  }
 });
 app.delete('/api/books/:bookId', authenticateOptional, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const bookId = safeBookId(req.params.bookId);
@@ -371,7 +410,10 @@ app.delete('/api/books/:bookId', authenticateOptional, requireAdmin, async (req:
   if (!snapshot.exists) return res.status(404).json({ success: false, error: 'The book could not be found.' });
   const book = snapshot.data() || {};
   const paths = [book.pdfStoragePath, book.coverStoragePath].filter(Boolean).map(safeStoragePath).filter(Boolean) as string[];
-  if (paths.length) await supabaseAdmin.storage.from(BUCKET_NAME).remove(paths);
+  if (paths.length) {
+    const { error } = await supabaseAdmin.storage.from(BUCKET_NAME).remove(Array.from(new Set(paths)));
+    if (error) return res.status(500).json({ success: false, error: 'The book files could not be removed, so the book was not deleted.' });
+  }
   await ref.delete();
   console.info('Book deleted', { by: req.firebaseUser?.email, bookId, at: new Date().toISOString() });
   return res.json({ success: true });

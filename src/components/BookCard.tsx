@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Book } from '../types/library';
 import { useRouter } from '../context/RouterContext';
 import { useLibrary } from '../context/LibraryContext';
@@ -14,6 +14,7 @@ export const BookCard: React.FC<BookCardProps> = ({ book, compact = false }) => 
   const { getProgressForBook } = useLibrary();
 
   const progress = getProgressForBook(book.id);
+  const [coverFailed, setCoverFailed] = useState(false);
 
   return (
     <article
@@ -22,13 +23,17 @@ export const BookCard: React.FC<BookCardProps> = ({ book, compact = false }) => 
     >
       {/* Cover Frame */}
       <div className="relative aspect-[3/4] bg-[#FAF8F2] overflow-hidden flex items-center justify-center border-b border-[#EEF5F0]">
-        {book.coverUrl ? (
+        {book.coverUrl && !coverFailed ? (
           <img
             src={book.coverUrl}
             alt={book.title}
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
             loading="lazy"
             referrerPolicy="no-referrer"
+            onError={(event) => {
+              console.warn('Book cover could not be loaded', { bookId: book.id, src: event.currentTarget.src });
+              setCoverFailed(true);
+            }}
           />
         ) : (
           /* Typographic Fallback Plate */

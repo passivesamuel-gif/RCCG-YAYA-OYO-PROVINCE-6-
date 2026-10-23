@@ -260,12 +260,19 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
             });
           });
 
-          // Sort by creation date descending
-          loaded.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-
-          setBooks(loaded);
-          setLoadingBooks(false);
-          setBooksError(null);
+          // Resolve private cover objects through the protected signed-URL endpoint.
+          void Promise.all(loaded.map(async (book) => {
+            if (!book.coverStoragePath || !book.published) return book;
+            const coverResult = await safeFetch<{ signedUrl?: string }>(`/api/files/signed-url?path=${encodeURIComponent(book.coverStoragePath)}`);
+            return coverResult.success && coverResult.data?.signedUrl
+              ? { ...book, coverUrl: coverResult.data.signedUrl }
+              : book;
+          })).then((resolvedBooks) => {
+            resolvedBooks.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            setBooks(resolvedBooks);
+            setLoadingBooks(false);
+            setBooksError(null);
+          });
         },
         (err) => {
           clearTimeout(timer);
@@ -339,6 +346,7 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     let result = books.filter(
       (b) =>
         b.published &&
+        b.coverUrl &&
         (b.pdfUrl || b.pdfStoragePath) &&
         b.uploadStatus !== 'finishing' &&
         b.uploadStatus !== 'failed'
@@ -478,30 +486,24 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  // Background upload worker with 60s stall timeout
+  // Upload worker: only returns success after both files and metadata are confirmed.
   const processBackgroundUpload = async (
     bookId: string,
     pdfFile: File,
     coverFile: File | null | undefined,
-    metadata: Pick<UploadBookParams, 'title' | 'author' | 'category' | 'description' | 'featured' | 'tags'>
-  ) => {
+    metadata: Pick<UploadBookParams, 'title' | 'author' | 'category' | 'description' | 'featured' | 'published' | 'tags'>,
+    onProgress?: (info: UploadProgressInfo) => void,
+  ): Promise<{ success: boolean; error?: string }> => {
     let pdfStoragePath = '';
     let pdfUrl = '';
     let coverStoragePath = '';
     let coverUrl = '';
 
-    // 60-second stall timer
-    const stallTimer = setTimeout(async () => {
-      setLastUploadError({
-        message: "This book's file didn't finish uploading.",
-        bookId,
-        timestamp: Date.now(),
-        details: 'Upload timed out after 60 seconds without progress.',
-      });
-    }, 60000);
-
     try {
+      if (!coverFile) throw new Error('A cover image is required before a book can be published.');
+      onProgress?.({ percent: 5, statusText: 'Validating selected files...', pdfProgress: 0, coverProgress: 0, speedText: 'Preparing', etaText: 'Please wait', isStalled: false });
       // 1. Upload PDF file via server endpoint
+      onProgress?.({ percent: 10, statusText: 'Uploading PDF document...', pdfProgress: 10, coverProgress: 0, speedText: 'Uploading', etaText: 'PDF in progress', isStalled: false });
       const pdfRes = await uploadFileViaServer(pdfFile, 'pdf', bookId);
       if (!pdfRes.success || !pdfRes.path || !pdfRes.confirmedSize || pdfRes.confirmedSize <= 0) {
         throw new Error(pdfRes.error || "This book's file didn't finish uploading.");
@@ -509,18 +511,17 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       pdfStoragePath = pdfRes.path;
       pdfUrl = pdfRes.signedUrl || '';
 
-      // 2. Upload Cover file via server endpoint if present
-      if (coverFile) {
-        const compressedCover = await compressCoverImage(coverFile);
-        const coverRes = await uploadFileViaServer(compressedCover, 'cover', bookId);
-        if (coverRes.success && coverRes.path) {
-          coverStoragePath = coverRes.path;
-          coverUrl = coverRes.signedUrl || '';
-        }
+      // 2. Upload and confirm the required cover image.
+      onProgress?.({ percent: 55, statusText: 'Uploading cover image...', pdfProgress: 100, coverProgress: 10, speedText: 'Uploading', etaText: 'Cover in progress', isStalled: false });
+      const compressedCover = await compressCoverImage(coverFile);
+      const coverRes = await uploadFileViaServer(compressedCover, 'cover', bookId);
+      if (!coverRes.success || !coverRes.path || !coverRes.confirmedSize || coverRes.confirmedSize <= 0) {
+        throw new Error(coverRes.error || 'The cover image could not be confirmed.');
       }
+      coverStoragePath = coverRes.path;
+      coverUrl = coverRes.signedUrl || '';
 
-      clearTimeout(stallTimer);
-
+      onProgress?.({ percent: 85, statusText: 'Saving verified book details...', pdfProgress: 100, coverProgress: 100, speedText: 'Complete', etaText: 'Saving metadata', isStalled: false });
       const createResult = await safeFetch('/api/books', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -533,7 +534,7 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
           coverStoragePath,
           pdfSize: pdfRes.confirmedSize,
           pages: 0,
-          published: true,
+          published: Boolean(metadata.published),
           createdAt: Date.now(),
           featured: Boolean(metadata.featured),
           tags: metadata.tags || [],
@@ -541,8 +542,10 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
       if (!createResult.success) throw new Error(createResult.error || 'The book details could not be saved.');
       setLastUploadError(null);
+      onProgress?.({ percent: 100, statusText: 'Book published successfully.', pdfProgress: 100, coverProgress: 100, speedText: 'Complete', etaText: 'Done', isStalled: false });
+      refetchBooks();
+      return { success: true };
     } catch (err: any) {
-      clearTimeout(stallTimer);
       const errText = err?.message || "This book's file didn't finish uploading.";
       console.error(`Background upload error for ${bookId}:`, errText);
 
@@ -552,7 +555,8 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         timestamp: Date.now(),
         details: String(err || errText),
       });
-
+      onProgress?.({ percent: 0, statusText: errText, pdfProgress: 0, coverProgress: 0, speedText: 'Stopped', etaText: 'Fix the error and retry', isStalled: true });
+      return { success: false, error: errText };
     }
   };
 
@@ -568,7 +572,9 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       pdfFile,
       coverFile,
       featured = false,
+      published = true,
       tags = [],
+      onProgress,
     } = params;
 
     // 1. Strict File Size Validations BEFORE starting upload
@@ -583,7 +589,11 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       };
     }
 
-    if (coverFile && coverFile.size > maxCoverBytes) {
+    if (!coverFile) {
+      return { success: false, error: 'Please select a cover image. A PDF and cover are both required.' };
+    }
+
+    if (coverFile.size > maxCoverBytes) {
       const actualMb = (coverFile.size / (1024 * 1024)).toFixed(1);
       return {
         success: false,
@@ -593,17 +603,15 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     try {
       const bookId = `book-${Date.now()}`;
-      // Start asynchronous background upload
-      processBackgroundUpload(bookId, pdfFile, coverFile, {
+      return await processBackgroundUpload(bookId, pdfFile, coverFile, {
         title: title.trim(),
         author: author.trim(),
         category: category.trim(),
         description: description.trim(),
         featured,
+        published,
         tags,
-      });
-
-      return { success: true, bookId };
+      }, params.onProgress).then((result) => ({ ...result, bookId: result.success ? bookId : undefined }));
     } catch (err: any) {
       console.error('Failed to add book:', err);
       return { success: false, error: 'Failed to add book. Please try again.' };
@@ -634,6 +642,15 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       onProgress?: (info: UploadProgressInfo) => void;
     }
   ): Promise<{ success: boolean; error?: string }> => {
+    let newPdfStoragePath = '';
+    let newCoverStoragePath = '';
+    const cleanupReplacementFiles = async () => {
+      await Promise.all([newPdfStoragePath, newCoverStoragePath].filter(Boolean).map((path) => safeFetch('/api/files/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      })));
+    };
     try {
       const docUpdates: any = { ...updates, updatedAt: Date.now() };
 
@@ -645,6 +662,7 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (!pdfRes.success || !pdfRes.path) {
           return { success: false, error: pdfRes.error || 'Failed to upload new PDF file.' };
         }
+        newPdfStoragePath = pdfRes.path;
         docUpdates.pdfStoragePath = pdfRes.path;
         docUpdates.pdfUrl = pdfRes.signedUrl || (await getSignedUrl(pdfRes.path));
       }
@@ -656,8 +674,12 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const compressedCover = await compressCoverImage(files.newCoverFile);
         const coverRes = await uploadFileViaServer(compressedCover, 'cover', bookId);
         if (coverRes.success && coverRes.path) {
+          newCoverStoragePath = coverRes.path;
           docUpdates.coverStoragePath = coverRes.path;
           docUpdates.coverUrl = coverRes.signedUrl || (await getSignedUrl(coverRes.path));
+        } else {
+          await cleanupReplacementFiles();
+          return { success: false, error: coverRes.error || 'Failed to upload new cover image.' };
         }
       }
 
@@ -666,10 +688,11 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(docUpdates),
       });
-      return result.success
-        ? { success: true }
-        : { success: false, error: result.error || 'Failed to update book. Please try again.' };
+      if (result.success) return { success: true };
+      await cleanupReplacementFiles();
+      return { success: false, error: result.error || 'Failed to update book. Please try again.' };
     } catch (err: any) {
+      await cleanupReplacementFiles();
       console.error('Failed to update book:', err);
       return { success: false, error: 'Failed to update book. Please try again.' };
     }

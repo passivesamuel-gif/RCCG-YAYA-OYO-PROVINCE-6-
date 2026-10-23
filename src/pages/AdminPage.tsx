@@ -258,8 +258,8 @@ export const AdminPage: React.FC = () => {
 
     const finalCategory = (customCategory.trim() || category.trim()).trim();
 
-    if (!title.trim() || !author.trim() || !finalCategory || !pdfFile) {
-      setErrorMessage('Please provide Title, Author, Category, and the PDF document.');
+    if (!title.trim() || !author.trim() || !finalCategory || !pdfFile || !coverFile) {
+      setErrorMessage('Please provide Title, Author, Category, the PDF document, and a cover image.');
       return;
     }
 
@@ -296,8 +296,11 @@ export const AdminPage: React.FC = () => {
       pdfFile,
       coverFile,
       featured: isFeatured,
+      published: isPublished,
       tags,
+      onProgress: setUploadInfo,
     });
+    setIsUploading(false);
 
     if (result.success) {
       setUploadModalOpen(false);
@@ -1067,7 +1070,7 @@ export const AdminPage: React.FC = () => {
               {/* Cover Image */}
               <div className="space-y-2">
                 <label className="block text-xs font-semibold text-[#252B2A]">
-                  Cover image (Optional, under 5 MB)
+                    Cover image (Required, under 5 MB)
                 </label>
                 <div className="flex items-center gap-4">
                   {coverPreviewUrl && (
@@ -1099,7 +1102,7 @@ export const AdminPage: React.FC = () => {
                     <label htmlFor="admin-cover-input" className="cursor-pointer block space-y-1">
                       <ImageIcon className="w-5 h-5 text-[#737B76] mx-auto" />
                       <span className="text-xs font-semibold text-[#252B2A] block">
-                        {coverFile ? `${coverFile.name} (${Math.round(coverFile.size / 1024 * 10) / 10} KB)` : 'Select cover image (auto-compressed)'}
+                        {coverFile ? `${coverFile.name} (${Math.round(coverFile.size / 1024 * 10) / 10} KB)` : 'Select cover image (required)'}
                       </span>
                     </label>
                   </div>
