@@ -223,7 +223,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     }
 
-    getRedirectResult(auth).catch((err: any) => {
+    authPersistenceReady.then(() => getRedirectResult(auth)).catch((err: any) => {
       const errorRecord: AuthAttemptError = {
         code: err?.code || 'auth/unknown',
         message: err?.message || String(err || 'Unknown error'),
@@ -250,9 +250,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithGoogle = async () => {
     try {
-      await authPersistenceReady;
       // Popup returns the completed Firebase credential directly, avoiding the
       // mobile redirect callback loop seen on some Render/Firebase combinations.
+      // This call must remain directly inside the button's user gesture; waiting
+      // for persistence here causes mobile browsers to reject the popup.
       const result = await signInWithPopup(auth, googleProvider);
       const currentUser = result.user;
 
@@ -293,6 +294,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const code = String(err?.code || '').toLowerCase();
       if (code.includes('popup-blocked') || code.includes('network-request-failed')) {
         try {
+          await authPersistenceReady;
           await signInWithRedirect(auth, googleProvider);
           return { success: true };
         } catch (redirectErr: any) {

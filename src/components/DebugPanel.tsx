@@ -74,7 +74,7 @@ export const DebugPanel: React.FC = () => {
 
     try {
       if (firebaseConfig.authDomain) {
-        await fetch(`https://${firebaseConfig.authDomain}/__/__/auth/handler`, {
+        await fetch(`https://${firebaseConfig.authDomain}/__/auth/handler`, {
           method: 'GET',
           mode: 'no-cors',
         });
