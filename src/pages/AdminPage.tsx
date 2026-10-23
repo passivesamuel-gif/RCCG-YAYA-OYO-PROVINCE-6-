@@ -681,11 +681,12 @@ export const AdminPage: React.FC = () => {
                                 setEditPdfFile(null);
                                 setEditCoverFile(null);
                               }}
-                              className="p-1.5 text-[#737B76] hover:text-[#123D2A] rounded-xs transition-colors cursor-pointer"
+                              className="inline-flex items-center gap-1 px-2 py-1.5 text-[#737B76] hover:text-[#123D2A] hover:bg-[#EEF5F0] rounded-xs transition-colors cursor-pointer"
                               title="Edit Details"
                               aria-label="Edit Details"
                             >
                               <Edit2 className="w-4 h-4" />
+                              <span className="hidden sm:inline text-[10px] font-semibold">Edit</span>
                             </button>
                             <button
                               onClick={() => setDeleteConfirmBook(b)}
