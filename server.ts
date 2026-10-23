@@ -304,6 +304,8 @@ app.post('/api/maintenance/import-single-book', storageUpload.fields([
   const pdfPath = `books/${bookId}/the-power-of-prayer-and-fasting.pdf`;
   const coverPath = `covers/${bookId}/the-power-of-prayer-and-fasting.jpg`;
   try {
+    const { error: bucketError } = await supabaseAdmin.storage.createBucket(BUCKET_NAME, { public: false });
+    if (bucketError && !/already exists/i.test(bucketError.message)) throw bucketError;
     const pdfUpload = await supabaseAdmin.storage.from(BUCKET_NAME).upload(pdfPath, pdf.buffer, { contentType: 'application/pdf', upsert: false });
     if (pdfUpload.error) throw pdfUpload.error;
     const coverUpload = await supabaseAdmin.storage.from(BUCKET_NAME).upload(coverPath, cover.buffer, { contentType: cover.mimetype, upsert: false });
