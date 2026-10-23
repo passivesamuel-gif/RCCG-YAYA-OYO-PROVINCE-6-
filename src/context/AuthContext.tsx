@@ -160,8 +160,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [adminTokenRefreshed, setAdminTokenRefreshed] = useState<boolean>(false);
 
   const refreshGoogleAdminStatus = async (): Promise<boolean> => {
-    const response = await safeFetch<{ isAdmin?: boolean; approved?: boolean }>('/api/admin/google-status');
+    const response = await safeFetch<{ isAdmin?: boolean; approved?: boolean; role?: 'admin' | 'reader' }>('/api/admin/google-status');
     setAdminVerified(Boolean(response.success && response.data?.isAdmin));
+    if (response.success && response.data?.role) {
+      setProfile((previous) => previous ? {
+        ...previous,
+        role: response.data?.role === 'admin' ? 'admin' : 'member',
+      } : previous);
+    }
     if (response.success && response.data?.isAdmin) {
       await auth.currentUser?.getIdToken(true);
       setAdminTokenRefreshed(true);
@@ -244,12 +250,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     }
 
-    authPersistenceReady
-      .then(() => getRedirectResult(auth))
-      .then((result) => {
-        if (result?.user) setLastAuthAttemptError(null);
-      })
-      .catch((err: any) => {
+    getRedirectResult(auth).catch((err: any) => {
         const errorRecord: AuthAttemptError = {
           code: err?.code || 'auth/unknown',
           message: err?.message || String(err || 'Unknown error'),
@@ -279,12 +280,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithGoogle = async () => {
     try {
+      await authPersistenceReady;
       // Popup returns the completed Firebase credential directly, avoiding the
       // mobile redirect callback loop seen on some Render/Firebase combinations.
-      // Do not await persistence here: waiting first can lose the mobile
-      // browser's user gesture and cause the popup to be rejected as a network
-      // error. Persistence is initialized at module load and can finish while
-      // Firebase opens the chooser.
       const result = await signInWithPopup(auth, googleProvider);
       const currentUser = result.user;
 
@@ -323,16 +321,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     } catch (err: any) {
       const code = String(err?.code || '').toLowerCase();
-      if (
-        code.includes('popup-blocked') ||
-        code.includes('operation-not-supported-in-this-environment') ||
-        code.includes('cancelled-popup-request') ||
-        code.includes('network-request-failed')
-      ) {
+      if (code.includes('popup-blocked') || code.includes('network-request-failed')) {
         try {
-          // Redirect must wait for Firebase persistence; otherwise mobile
-          // browsers can return an invalid action from the Firebase handler.
-          await authPersistenceReady;
           await signInWithRedirect(auth, googleProvider);
           return { success: true };
         } catch (redirectErr: any) {

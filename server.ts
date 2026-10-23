@@ -8,7 +8,6 @@ import { getAuth as getAdminAuth, DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import multer from 'multer';
-import { createProxyMiddleware } from 'http-proxy-middleware';
 import { describeAdminCheck } from './app/adminDiagnostics';
 
 dotenv.config();
@@ -159,11 +158,6 @@ async function confirmStoredFile(storagePath: string, expectedSize: number) {
   return actualSize;
 }
 
-app.use('/__/auth', createProxyMiddleware({
-  target: 'https://gen-lang-client-0628990292.firebaseapp.com',
-  changeOrigin: true,
-  pathRewrite: (requestPath) => `/__/auth${requestPath}`,
-}));
 app.use(express.json({ limit: '1mb' }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', app: 'RCCG YAYA OYO 6 E-Library' }));
 app.get('/api/admin/diagnostics', authenticate, async (req: AuthenticatedRequest, res) => {
@@ -193,7 +187,21 @@ app.get('/api/admin/google-status', authenticate, async (req: AuthenticatedReque
       adminSessionExpiresAt: Date.now() + ADMIN_SESSION_TTL_MS,
     });
   }
-  return res.json({ success: true, isAdmin: approved, approved, emailVerified: req.firebaseUser?.email_verified === true });
+  try {
+    await adminDb.collection('users').doc(req.firebaseUser!.uid).set({
+      role: approved ? 'admin' : 'member',
+      updatedAt: Date.now(),
+    }, { merge: true });
+  } catch (error) {
+    console.error('Could not persist server-decided user role', { message: error instanceof Error ? error.message : 'unknown' });
+  }
+  return res.json({
+    success: true,
+    isAdmin: approved,
+    approved,
+    role: approved ? 'admin' : 'reader',
+    emailVerified: req.firebaseUser?.email_verified === true,
+  });
 });
 
 app.post('/api/admin/verify-signin', authenticate, async (req: AuthenticatedRequest, res) => {
