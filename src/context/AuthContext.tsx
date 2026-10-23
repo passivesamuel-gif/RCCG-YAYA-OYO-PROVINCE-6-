@@ -275,6 +275,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signInWithGoogle = async () => {
     try {
       await authPersistenceReady;
+      // Clear the restored Firebase user first so the Google chooser always opens.
+      // The provider prompt below also prevents silent reuse of the last Google account.
+      if (auth.currentUser) await signOut(auth);
       // Popup returns the completed Firebase credential directly, avoiding the
       // mobile redirect callback loop seen on some Render/Firebase combinations.
       const result = await signInWithPopup(auth, googleProvider);
