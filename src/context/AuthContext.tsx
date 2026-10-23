@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
   User as FirebaseUser,
   onAuthStateChanged,
+  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   signInWithEmailAndPassword,
@@ -277,11 +278,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Clear the restored Firebase user first so the Google chooser always opens.
       // The provider prompt below also prevents silent reuse of the last Google account.
       if (auth.currentUser) await signOut(auth);
-      // Use Firebase's normal redirect flow so Google shows its account chooser
-      // and the browser completes the normal auth callback before the app loads.
-      await signInWithRedirect(auth, googleProvider);
+      // Use the working Firebase consent popup so Google can show the account
+      // chooser and ask the user to approve access to this app.
+      await signInWithPopup(auth, googleProvider);
       return { success: true };
     } catch (err: any) {
+      const code = String(err?.code || '').toLowerCase();
+      if (code.includes('popup-blocked') || code.includes('network-request-failed')) {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return { success: true };
+        } catch (redirectErr: any) {
+          recordAuthError(redirectErr, 'google');
+          return { success: false, error: mapAuthError(redirectErr) };
+        }
+      }
       recordAuthError(err, 'google');
       return { success: false, error: mapAuthError(err) };
     }
