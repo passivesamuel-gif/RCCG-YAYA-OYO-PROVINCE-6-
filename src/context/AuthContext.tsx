@@ -181,6 +181,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Sync Firebase Auth state
   useEffect(() => {
     let unsubscribe: () => void = () => {};
+    const startupFallback = window.setTimeout(() => setLoading(false), 5000);
 
     try {
       unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -235,6 +236,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setLastAdminCheck(null);
         }
 
+        window.clearTimeout(startupFallback);
         setLoading(false);
       });
     } catch (e) {
@@ -253,7 +255,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('[Auth Diagnostic - GOOGLE REDIRECT]', errorRecord);
     });
 
-    return () => unsubscribe();
+    return () => {
+      window.clearTimeout(startupFallback);
+      unsubscribe();
+    };
   }, []);
 
   const recordAuthError = (err: any, type: AuthAttemptError['type']) => {
