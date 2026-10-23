@@ -62,7 +62,10 @@ async function getSecuritySettings(): Promise<SecuritySettings> {
     const storedApprovedEmails = Array.isArray(data.approvedEmails)
       ? data.approvedEmails.map((email) => String(email).trim().toLowerCase()).filter(Boolean)
       : [];
-    const approvedEmails = Array.from(new Set([...storedApprovedEmails, ...INITIAL_APPROVED_EMAILS]));
+    const approvedEmails = Array.from(new Set([
+      ...INITIAL_APPROVED_EMAILS,
+      ...storedApprovedEmails.filter((email) => INITIAL_APPROVED_EMAILS.has(email)),
+    ]));
     return {
       mainAdminEmail: String(data.mainAdminEmail || PRIMARY_ADMIN_EMAIL).toLowerCase(),
       approvedEmails,
