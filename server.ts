@@ -59,9 +59,13 @@ async function getSecuritySettings(): Promise<SecuritySettings> {
   const snapshot = await SECURITY_DOC.get();
   if (snapshot.exists) {
     const data = snapshot.data() || {};
+    const storedApprovedEmails = Array.isArray(data.approvedEmails)
+      ? data.approvedEmails.map((email) => String(email).trim().toLowerCase()).filter(Boolean)
+      : [];
+    const approvedEmails = Array.from(new Set([...storedApprovedEmails, ...INITIAL_APPROVED_EMAILS]));
     return {
       mainAdminEmail: String(data.mainAdminEmail || PRIMARY_ADMIN_EMAIL).toLowerCase(),
-      approvedEmails: Array.isArray(data.approvedEmails) ? data.approvedEmails.map((email) => String(email).toLowerCase()) : Array.from(INITIAL_APPROVED_EMAILS),
+      approvedEmails,
       accessPasswordHash: String(data.accessPasswordHash || process.env.ADMIN_ACCESS_PASSWORD_HASH),
     };
   }
