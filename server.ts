@@ -337,7 +337,11 @@ app.post('/api/maintenance/import-single-book', storageUpload.fields([
     return res.json({ success: true, bookId, title: book.title });
   } catch (error) {
     await supabaseAdmin.storage.from(BUCKET_NAME).remove([pdfPath, coverPath]).catch(() => undefined);
-    console.error('One-time book import failed', { message: error instanceof Error ? error.message : 'unknown' });
+    console.error('One-time book import failed', {
+      message: error instanceof Error ? error.message : 'unknown',
+      bucket: BUCKET_NAME,
+      supabaseHost: (() => { try { return new URL(process.env.SUPABASE_URL || '').host; } catch { return 'invalid-url'; } })(),
+    });
     return res.status(500).json({ success: false, error: 'The one-time book import failed.' });
   }
 });
