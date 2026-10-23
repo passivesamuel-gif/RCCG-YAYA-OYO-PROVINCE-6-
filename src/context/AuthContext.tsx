@@ -130,7 +130,7 @@ export const mapAuthError = (err: any): string => {
   }
 
   if (code.includes('network-request-failed')) {
-    return 'Network connection error. Please verify your internet connection or check if this domain is authorized in Firebase.';
+    return `Firebase sign-in failed (${err?.code || 'auth/network-request-failed'}): ${rawMsg || 'Network connection error.'}`;
   }
 
   if (code.includes('timeout')) {
@@ -146,7 +146,7 @@ export const mapAuthError = (err: any): string => {
     return cleaned;
   }
 
-  return "We couldn't complete your request. Please check your details and try again.";
+  return `Firebase sign-in failed (${err?.code || 'auth/unknown'}): ${rawMsg || "We couldn't complete your request."}`;
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -244,16 +244,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     }
 
-    authPersistenceReady.then(() => getRedirectResult(auth)).catch((err: any) => {
-      const errorRecord: AuthAttemptError = {
-        code: err?.code || 'auth/unknown',
-        message: err?.message || String(err || 'Unknown error'),
-        timestamp: Date.now(),
-        type: 'google',
-      };
-      setLastAuthAttemptError(errorRecord);
-      console.error('[Auth Diagnostic - GOOGLE REDIRECT]', errorRecord);
-    });
+    authPersistenceReady
+      .then(() => getRedirectResult(auth))
+      .then((result) => {
+        if (result?.user) setLastAuthAttemptError(null);
+      })
+      .catch((err: any) => {
+        const errorRecord: AuthAttemptError = {
+          code: err?.code || 'auth/unknown',
+          message: err?.message || String(err || 'Unknown error'),
+          timestamp: Date.now(),
+          type: 'google',
+        };
+        setLastAuthAttemptError(errorRecord);
+        console.error('[Auth Diagnostic - GOOGLE REDIRECT]', errorRecord);
+      });
 
     return () => {
       window.clearTimeout(startupFallback);
@@ -318,7 +323,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     } catch (err: any) {
       const code = String(err?.code || '').toLowerCase();
-      if (code.includes('popup-blocked') || code.includes('network-request-failed')) {
+      if (
+        code.includes('popup-blocked') ||
+        code.includes('operation-not-supported-in-this-environment') ||
+        code.includes('cancelled-popup-request') ||
+        code.includes('network-request-failed')
+      ) {
         try {
           // Redirect must wait for Firebase persistence; otherwise mobile
           // browsers can return an invalid action from the Firebase handler.

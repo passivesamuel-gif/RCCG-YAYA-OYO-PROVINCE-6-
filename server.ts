@@ -8,6 +8,7 @@ import { getAuth as getAdminAuth, DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import multer from 'multer';
+import { createProxyMiddleware } from 'http-proxy-middleware';
 import { describeAdminCheck } from './app/adminDiagnostics';
 
 dotenv.config();
@@ -158,6 +159,11 @@ async function confirmStoredFile(storagePath: string, expectedSize: number) {
   return actualSize;
 }
 
+app.use('/__/auth', createProxyMiddleware({
+  target: 'https://gen-lang-client-0628990292.firebaseapp.com',
+  changeOrigin: true,
+  pathRewrite: (requestPath) => `/__/auth${requestPath}`,
+}));
 app.use(express.json({ limit: '1mb' }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', app: 'RCCG YAYA OYO 6 E-Library' }));
 app.get('/api/admin/diagnostics', authenticate, async (req: AuthenticatedRequest, res) => {
