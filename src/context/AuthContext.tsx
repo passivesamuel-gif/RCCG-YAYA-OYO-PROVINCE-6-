@@ -3,6 +3,7 @@ import {
   User as FirebaseUser,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
   getRedirectResult,
   signInWithEmailAndPassword,
   sendEmailVerification,
@@ -313,6 +314,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLastAuthAttemptError(null);
       return { success: true };
     } catch (err: any) {
+      const code = String(err?.code || '').toLowerCase();
+      if (code.includes('popup-blocked') || code.includes('network-request-failed')) {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return { success: true };
+        } catch (redirectErr: any) {
+          recordAuthError(redirectErr, 'google');
+          return { success: false, error: mapAuthError(redirectErr) };
+        }
+      }
       recordAuthError(err, 'google');
       return { success: false, error: mapAuthError(err) };
     }
