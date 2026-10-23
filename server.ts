@@ -90,6 +90,12 @@ function verifyAccessPassword(password: string, encoded: string): boolean {
   } catch { return false; }
 }
 
+function isApprovedAdmin(identity: DecodedIdToken, settings: SecuritySettings): boolean {
+  const email = identity.email?.trim().toLowerCase();
+  if (identity.email_verified !== true || !email) return false;
+  return settings.approvedEmails.includes(email);
+}
+
 async function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const header = req.header('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
@@ -100,7 +106,7 @@ async function authenticate(req: AuthenticatedRequest, res: Response, next: Next
 async function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   if (!req.firebaseUser?.email) return res.status(403).json({ success: false, error: 'You do not have permission to do that.' });
   const settings = await getSecuritySettings();
-  if (!settings.approvedEmails.includes(req.firebaseUser.email.toLowerCase())) return res.status(403).json({ success: false, error: 'You do not have permission to do that.' });
+  if (!isApprovedAdmin(req.firebaseUser, settings)) return res.status(403).json({ success: false, error: 'You do not have permission to do that.' });
   return next();
 }
 function safeStoragePath(value: unknown): string | null {
@@ -128,16 +134,31 @@ async function confirmStoredFile(storagePath: string, expectedSize: number) {
 app.use(express.json({ limit: '1mb' }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', app: 'RCCG YAYA OYO 6 E-Library' }));
 app.get('/api/admin/google-status', authenticate, async (req: AuthenticatedRequest, res) => {
-  const email = req.firebaseUser?.email?.toLowerCase() || '';
   const settings = await getSecuritySettings();
-  return res.json({ success: true, isAdmin: Boolean(email && settings.approvedEmails.includes(email)) });
+  const approved = isApprovedAdmin(req.firebaseUser!, settings);
+  const email = req.firebaseUser?.email?.trim().toLowerCase() || '';
+  try {
+    await adminDb.collection('users').doc(req.firebaseUser!.uid).set({
+      email: email || null,
+      role: approved ? 'admin' : 'member',
+      updatedAt: Date.now(),
+    }, { merge: true });
+  } catch (error) {
+    console.error('Could not persist server-decided user role', { message: error instanceof Error ? error.message : 'unknown' });
+  }
+  return res.json({
+    success: true,
+    isAdmin: approved,
+    role: approved ? 'admin' : 'reader',
+    emailVerified: req.firebaseUser?.email_verified === true,
+  });
 });
 
 app.post('/api/admin/verify-signin', authenticate, async (req: AuthenticatedRequest, res) => {
   const { email, accessPassword } = req.body || {};
   const settings = await getSecuritySettings();
   const signedInEmail = req.firebaseUser?.email?.toLowerCase() || '';
-  if (!email || !accessPassword || signedInEmail !== String(email).trim().toLowerCase() || !settings.approvedEmails.includes(signedInEmail) || !verifyAccessPassword(String(accessPassword), settings.accessPasswordHash)) {
+  if (!email || !accessPassword || !isApprovedAdmin(req.firebaseUser!, settings) || signedInEmail !== String(email).trim().toLowerCase() || !verifyAccessPassword(String(accessPassword), settings.accessPasswordHash)) {
     console.warn('Admin verification failed', { email: signedInEmail, at: new Date().toISOString() });
     return res.status(401).json({ success: false, error: 'Administrator verification failed.' });
   }

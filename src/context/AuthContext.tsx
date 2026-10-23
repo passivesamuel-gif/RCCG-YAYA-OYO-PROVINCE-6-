@@ -156,8 +156,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [adminVerified, setAdminVerified] = useState<boolean>(false);
 
   const refreshGoogleAdminStatus = async () => {
-    const response = await safeFetch<{ isAdmin?: boolean }>('/api/admin/google-status');
+    const response = await safeFetch<{ isAdmin?: boolean; role?: 'admin' | 'reader' }>('/api/admin/google-status');
     setAdminVerified(Boolean(response.success && response.data?.isAdmin));
+    if (response.success && response.data?.role) {
+      setProfile((previous) => previous ? {
+        ...previous,
+        role: response.data?.role === 'admin' ? 'admin' : 'member',
+      } : previous);
+    }
   };
 
   // Sync Firebase Auth state
