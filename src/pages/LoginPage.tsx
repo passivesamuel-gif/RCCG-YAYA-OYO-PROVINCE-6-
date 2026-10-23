@@ -19,8 +19,7 @@ export const LoginPage: React.FC = () => {
     setIsSubmitting(true);
     const result = await signInWithGoogle();
     setIsSubmitting(false);
-    if (result.success) navigate(result.approvedAdmin ? '/admin' : redirectTarget === '/admin' ? '/library' : redirectTarget);
-    else setErrorMessage(result.error || 'Google sign-in could not be completed. Please try again.');
+    if (!result.success) setErrorMessage(result.error || 'Google sign-in could not be completed. Please try again.');
   };
 
   return (

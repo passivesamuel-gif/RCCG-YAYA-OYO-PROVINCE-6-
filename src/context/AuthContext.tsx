@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
   User as FirebaseUser,
   onAuthStateChanged,
-  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   signInWithEmailAndPassword,
@@ -278,55 +277,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Clear the restored Firebase user first so the Google chooser always opens.
       // The provider prompt below also prevents silent reuse of the last Google account.
       if (auth.currentUser) await signOut(auth);
-      // Popup returns the completed Firebase credential directly, avoiding the
-      // mobile redirect callback loop seen on some Render/Firebase combinations.
-      const result = await signInWithPopup(auth, googleProvider);
-      const currentUser = result.user;
-
-      try {
-        const userRef = doc(db, 'users', currentUser.uid);
-        const userSnap = await getDoc(userRef);
-        if (!userSnap.exists()) {
-          const displayName = currentUser.displayName || '';
-          const parts = displayName.trim().split(' ');
-          const parsedFirst = parts[0] || 'Member';
-          const parsedLast = parts.slice(1).join(' ') || '';
-
-          const newProfile: UserProfile = {
-            uid: currentUser.uid,
-            firstName: parsedFirst,
-            lastName: parsedLast,
-            name: displayName || parsedFirst,
-            email: currentUser.email || '',
-            role: 'member',
-            createdAt: Date.now(),
-          };
-          await setDoc(userRef, newProfile);
-          setProfile(newProfile);
-        } else {
-          const existing = userSnap.data() as UserProfile;
-          setProfile(existing);
-        }
-
-      } catch (err) {
-        console.warn('Firestore profile write notice:', err);
-      }
-
-      const approvedAdmin = await refreshGoogleAdminStatus();
-
-      setLastAuthAttemptError(null);
-      return { success: true, approvedAdmin };
+      // Use Firebase's normal redirect flow so Google shows its account chooser
+      // and the browser completes the normal auth callback before the app loads.
+      await signInWithRedirect(auth, googleProvider);
+      return { success: true };
     } catch (err: any) {
-      const code = String(err?.code || '').toLowerCase();
-      if (code.includes('popup-blocked') || code.includes('network-request-failed')) {
-        try {
-          await signInWithRedirect(auth, googleProvider);
-          return { success: true };
-        } catch (redirectErr: any) {
-          recordAuthError(redirectErr, 'google');
-          return { success: false, error: mapAuthError(redirectErr) };
-        }
-      }
       recordAuthError(err, 'google');
       return { success: false, error: mapAuthError(err) };
     }
