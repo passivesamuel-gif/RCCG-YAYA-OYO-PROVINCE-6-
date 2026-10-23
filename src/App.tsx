@@ -50,8 +50,7 @@ const AppContent: React.FC = () => {
       path.startsWith('/book/') ||
       path.startsWith('/read/') ||
       path === '/dashboard' ||
-      path === '/profile' ||
-      path === '/admin';
+      path === '/profile';
 
     if (isProtectedRoute && !user) {
       // Unauthenticated visitors are sent to Sign In with return redirect

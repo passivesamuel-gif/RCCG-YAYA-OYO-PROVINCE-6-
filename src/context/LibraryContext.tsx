@@ -174,10 +174,40 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // 1. Fetch books from Firestore with 15-second safety timeout
   useEffect(() => {
     if (!user) {
-      setBooks([]);
-      setLoadingBooks(false);
-      setBooksError(null);
-      return;
+      let cancelled = false;
+      setLoadingBooks(true);
+      safeFetch<{ books?: any[] }>('/api/admin/books').then((result) => {
+        if (cancelled) return;
+        if (!result.success || !Array.isArray(result.data?.books)) {
+          setBooks([]);
+          setLoadingBooks(false);
+          setBooksError(null);
+          return;
+        }
+        const loaded = result.data.books.map((data: any) => ({
+          id: String(data.id || ''),
+          title: data.title || 'Untitled Volume',
+          author: data.author || 'Unknown Author',
+          category: data.category || 'General',
+          description: data.description || '',
+          coverUrl: data.coverUrl || '',
+          coverStoragePath: data.coverStoragePath || '',
+          pdfUrl: data.pdfUrl || '',
+          pdfStoragePath: data.pdfStoragePath || '',
+          pages: data.pages || 0,
+          published: data.published ?? false,
+          featured: data.featured ?? false,
+          tags: data.tags || [],
+          uploadStatus: data.uploadStatus || 'completed',
+          createdAt: data.createdAt || Date.now(),
+          updatedAt: data.updatedAt,
+        }));
+        loaded.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        setBooks(loaded);
+        setLoadingBooks(false);
+        setBooksError(null);
+      });
+      return () => { cancelled = true; };
     }
 
     setLoadingBooks(true);

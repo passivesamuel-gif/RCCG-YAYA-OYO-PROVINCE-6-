@@ -29,6 +29,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { EmptyState } from '../components/ui/EmptyState';
 import { TableRowSkeleton } from '../components/ui/Skeleton';
 import { FullPageLoader } from '../components/ui/FullPageLoader';
+import { safeFetch } from '../lib/api';
 
 
 export const AdminPage: React.FC = () => {
@@ -44,21 +45,24 @@ export const AdminPage: React.FC = () => {
     adminEmailConfigured,
     loading: authLoading,
   } = useAuth();
-  const { books, categories, uploadBook, editBook, removeBook, loadingBooks } = useLibrary();
+  const { books, categories, uploadBook, editBook, removeBook, loadingBooks, refetchBooks } = useLibrary();
 
   // Active tab in Admin Portal
   const [activeTab, setActiveTab] = useState<'catalogue' | 'security'>('catalogue');
 
-  // Non-admin redirect guard
+  const [adminSessionAuthenticated, setAdminSessionAuthenticated] = useState(false);
+  const [adminSessionLoading, setAdminSessionLoading] = useState(true);
+
+  // Administrator access is decided by the server-side HttpOnly session cookie.
   useEffect(() => {
-    if (!authLoading) {
-      if (!user) {
-        navigate('/login?redirect=/admin');
-      } else if (!isAdmin) {
-        navigate('/library');
-      }
-    }
-  }, [user, isAdmin, authLoading, navigate]);
+    let cancelled = false;
+    safeFetch<{ authenticated?: boolean }>('/api/admin/session').then((result) => {
+      if (cancelled) return;
+      setAdminSessionAuthenticated(Boolean(result.success && result.data?.authenticated));
+      setAdminSessionLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Modal & form states
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -152,21 +156,29 @@ export const AdminPage: React.FC = () => {
   }, [books, adminSearch]);
 
   // While auth status is loading, don't flash content
-  if (authLoading || !user || !isAdmin) {
+  if (authLoading || adminSessionLoading) {
     return <FullPageLoader />;
   }
 
   // If administrator access password is not verified for current session, show prompt
-  if (false && !adminVerified) {
+  if (!adminSessionAuthenticated) {
     const handleVerifySubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!accessPasswordInput.trim()) return;
       setVerifyingPassword(true);
       setVerifyError(null);
 
-      const res = await verifyAdminAccess(accessPasswordInput);
+      const res = await safeFetch('/api/admin/passcode-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: accessPasswordInput }),
+      });
       setVerifyingPassword(false);
-      if (!res.success) {
+      if (res.success) {
+        setAdminSessionAuthenticated(true);
+        setAccessPasswordInput('');
+        refetchBooks();
+      } else {
         setVerifyError(res.error || 'Administrator verification failed. Please check your credentials and try again.');
       }
     };
@@ -210,7 +222,7 @@ export const AdminPage: React.FC = () => {
               onChange={(e) => setAccessPasswordInput(e.target.value)}
               placeholder="Server administrator access key"
               leftIcon={<Lock className="w-4 h-4 text-[#737B76]" />}
-              hint="Verified securely by library authentication; never exposed in public variables."
+              hint="Verified only by the private server-side administrator passcode."
             />
 
             <Button
@@ -449,24 +461,32 @@ export const AdminPage: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-4 pt-1">
           <div>
             <h1 className="font-heading font-extrabold text-3xl sm:text-4xl text-[#123D2A] tracking-tight">
-              Administrator Dashboard
+              Admin Dashboard
             </h1>
             <p className="text-xs sm:text-sm text-[#737B76] max-w-2xl leading-relaxed mt-1">
               Upload and manage books for RCCG YAYA Oyo Province 6.
             </p>
           </div>
 
-          {/* Primary Action Button */}
-          {activeTab === 'catalogue' && (
-            <Button
-              variant="primary"
-              size="md"
-              onClick={() => setUploadModalOpen(true)}
-              icon={<Upload className="w-4 h-4 text-[#D4AF65]" />}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={async () => { await safeFetch('/api/admin/passcode-logout', { method: 'POST' }); setAdminSessionAuthenticated(false); navigate('/login'); }}
+              className="text-xs font-semibold text-[#737B76] hover:text-[#A8322D] underline cursor-pointer"
             >
-              Upload Book
-            </Button>
-          )}
+              Logout
+            </button>
+            {activeTab === 'catalogue' && (
+              <Button
+                variant="primary"
+                size="md"
+                onClick={() => setUploadModalOpen(true)}
+                icon={<Upload className="w-4 h-4 text-[#D4AF65]" />}
+              >
+                Upload Book
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 

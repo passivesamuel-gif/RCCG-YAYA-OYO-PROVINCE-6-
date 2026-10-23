@@ -34,6 +34,7 @@ export async function safeFetch<T = any>(
     const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
     const response = await fetch(url, {
       ...options,
+      credentials: 'same-origin',
       signal: controller.signal,
       headers: {
         'Accept': 'application/json',

@@ -49,7 +49,14 @@ interface SecuritySettings {
   approvedEmails: string[];
   accessPasswordHash: string;
 }
-interface AuthenticatedRequest extends Request { firebaseUser?: DecodedIdToken; }
+interface AuthenticatedRequest extends Request { firebaseUser?: DecodedIdToken; adminSession?: AdminSession; }
+interface AdminSession { tokenHash: string; expiresAt: number; }
+const ADMIN_SESSION_COOKIE = 'rccg_admin_session';
+const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const adminSessions = new Map<string, AdminSession>();
+const failedAdminAttempts = new Map<string, { count: number; resetAt: number }>();
+const ADMIN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const ADMIN_RATE_LIMIT_MAX_ATTEMPTS = 5;
 
 function apiError(message: string, status = 400) {
   return resJson({ success: false, error: message }, status);
@@ -98,6 +105,54 @@ function verifyAccessPassword(password: string, encoded: string): boolean {
   } catch { return false; }
 }
 
+function hashSessionToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+function readCookie(req: Request, name: string): string | null {
+  const header = req.header('cookie') || '';
+  const pair = header.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
+  return pair ? decodeURIComponent(pair.slice(name.length + 1)) : null;
+}
+function getAdminSession(req: Request): AdminSession | null {
+  const token = readCookie(req, ADMIN_SESSION_COOKIE);
+  if (!token) return null;
+  const tokenHash = hashSessionToken(token);
+  const session = adminSessions.get(tokenHash);
+  if (!session) return null;
+  if (session.expiresAt <= Date.now()) {
+    adminSessions.delete(tokenHash);
+    return null;
+  }
+  return session;
+}
+function setAdminSessionCookie(res: Response, token: string, expiresAt: number) {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(token)}; Max-Age=${Math.floor((expiresAt - Date.now()) / 1000)}; Path=/; HttpOnly; SameSite=Strict${secure}`);
+}
+function clearAdminSessionCookie(res: Response) {
+  res.setHeader('Set-Cookie', `${ADMIN_SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict`);
+}
+function getClientAddress(req: Request): string {
+  return String(req.header('x-forwarded-for')?.split(',')[0] || req.socket.remoteAddress || 'unknown').trim();
+}
+function isRateLimited(address: string): boolean {
+  const current = failedAdminAttempts.get(address);
+  if (!current || current.resetAt <= Date.now()) {
+    failedAdminAttempts.delete(address);
+    return false;
+  }
+  return current.count >= ADMIN_RATE_LIMIT_MAX_ATTEMPTS;
+}
+function recordFailedAdminAttempt(address: string) {
+  const now = Date.now();
+  const current = failedAdminAttempts.get(address);
+  if (!current || current.resetAt <= now) failedAdminAttempts.set(address, { count: 1, resetAt: now + ADMIN_RATE_LIMIT_WINDOW_MS });
+  else current.count += 1;
+}
+function clearFailedAdminAttempts(address: string) {
+  failedAdminAttempts.delete(address);
+}
+
 function isApprovedAdmin(identity: DecodedIdToken, settings: SecuritySettings): boolean {
   const email = identity.email?.trim().toLowerCase();
   if (identity.email_verified !== true || !email) return false;
@@ -111,8 +166,20 @@ async function authenticate(req: AuthenticatedRequest, res: Response, next: Next
   try { req.firebaseUser = await adminAuth.verifyIdToken(token); return next(); }
   catch { return res.status(401).json({ success: false, error: 'Please sign in again.' }); }
 }
+async function authenticateOptional(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const header = req.header('authorization') || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  if (!token) return next();
+  try { req.firebaseUser = await adminAuth.verifyIdToken(token); return next(); }
+  catch { return res.status(401).json({ success: false, error: 'Please sign in again.' }); }
+}
 async function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  if (!req.firebaseUser?.email) return res.status(403).json({ success: false, error: 'You do not have permission to do that.' });
+  const session = getAdminSession(req);
+  if (session) {
+    req.adminSession = session;
+    return next();
+  }
+  if (!req.firebaseUser?.email) return res.status(403).json({ success: false, error: 'Administrator authentication is required.' });
   const settings = await getSecuritySettings();
   if (!isApprovedAdmin(req.firebaseUser, settings)) return res.status(403).json({ success: false, error: 'You do not have permission to do that.' });
   return next();
@@ -141,6 +208,39 @@ async function confirmStoredFile(storagePath: string, expectedSize: number) {
 
 app.use(express.json({ limit: '1mb' }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', app: 'RCCG YAYA OYO 6 E-Library' }));
+app.post('/api/admin/passcode-login', async (req, res) => {
+  const address = getClientAddress(req);
+  if (isRateLimited(address)) return res.status(429).json({ success: false, error: 'Too many unsuccessful attempts. Please wait 15 minutes and try again.' });
+  const passcode = typeof req.body?.passcode === 'string' ? req.body.passcode : '';
+  const settings = await getSecuritySettings();
+  if (!passcode || !verifyAccessPassword(passcode, settings.accessPasswordHash)) {
+    recordFailedAdminAttempt(address);
+    console.warn('Administrator passcode verification failed', { address, at: new Date().toISOString() });
+    return res.status(401).json({ success: false, error: 'Administrator authentication failed.' });
+  }
+  clearFailedAdminAttempts(address);
+  const token = crypto.randomBytes(32).toString('base64url');
+  const expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
+  adminSessions.set(hashSessionToken(token), { tokenHash: hashSessionToken(token), expiresAt });
+  setAdminSessionCookie(res, token, expiresAt);
+  console.info('Administrator passcode session created', { at: new Date().toISOString() });
+  return res.json({ success: true, expiresAt });
+});
+app.get('/api/admin/session', (req, res) => {
+  const session = getAdminSession(req);
+  return res.json({ success: true, authenticated: Boolean(session), expiresAt: session?.expiresAt || null });
+});
+app.post('/api/admin/passcode-logout', (req, res) => {
+  const token = readCookie(req, ADMIN_SESSION_COOKIE);
+  if (token) adminSessions.delete(hashSessionToken(token));
+  clearAdminSessionCookie(res);
+  return res.json({ success: true });
+});
+app.get('/api/admin/books', authenticateOptional, requireAdmin, async (_req: AuthenticatedRequest, res) => {
+  const snapshot = await adminDb.collection('books').get();
+  const books = snapshot.docs.map((bookDoc) => ({ id: bookDoc.id, ...bookDoc.data() }));
+  return res.json({ success: true, books });
+});
 app.get('/api/admin/google-status', authenticate, async (req: AuthenticatedRequest, res) => {
   const settings = await getSecuritySettings();
   const approved = isApprovedAdmin(req.firebaseUser!, settings);
@@ -202,7 +302,7 @@ app.post('/api/admin/list-authorized', authenticate, requireAdmin, async (req: A
   return res.json({ success: true, primaryAdmin: settings.mainAdminEmail, authorizedEmails: settings.approvedEmails });
 });
 
-app.post('/api/files/upload', authenticate, requireAdmin, storageUpload.single('file'), async (req: AuthenticatedRequest, res) => {
+app.post('/api/files/upload', authenticateOptional, requireAdmin, storageUpload.single('file'), async (req: AuthenticatedRequest, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, error: 'Please choose a file.' });
     const fileType = req.body.fileType === 'cover' ? 'cover' : 'pdf';
@@ -235,7 +335,7 @@ app.get('/api/files/signed-url', authenticate, async (req: AuthenticatedRequest,
     return res.json({ success: true, signedUrl: await issueSignedUrl(storagePath) });
   } catch { return res.status(500).json({ success: false, error: 'The book could not be opened right now.' }); }
 });
-app.post('/api/files/delete', authenticate, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.post('/api/files/delete', authenticateOptional, requireAdmin, async (req: AuthenticatedRequest, res) => {
   const storagePath = safeStoragePath(req.body?.path);
   if (!storagePath) return res.status(400).json({ success: false, error: 'The file could not be found.' });
   const { error } = await supabaseAdmin.storage.from(BUCKET_NAME).remove([storagePath]);
@@ -244,7 +344,7 @@ app.post('/api/files/delete', authenticate, requireAdmin, async (req: Authentica
   return res.json({ success: true });
 });
 
-app.post('/api/books', authenticate, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.post('/api/books', authenticateOptional, requireAdmin, async (req: AuthenticatedRequest, res) => {
   const bookId = safeBookId(req.body?.id);
   const pdfStoragePath = safeStoragePath(req.body?.pdfStoragePath);
   const coverStoragePath = req.body?.coverStoragePath ? safeStoragePath(req.body.coverStoragePath) : null;
@@ -254,7 +354,7 @@ app.post('/api/books', authenticate, requireAdmin, async (req: AuthenticatedRequ
   await adminDb.collection('books').doc(bookId).set(book);
   return res.json({ success: true, book });
 });
-app.patch('/api/books/:bookId', authenticate, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.patch('/api/books/:bookId', authenticateOptional, requireAdmin, async (req: AuthenticatedRequest, res) => {
   const bookId = safeBookId(req.params.bookId);
   if (!bookId) return res.status(400).json({ success: false, error: 'The book could not be identified.' });
   const ref = adminDb.collection('books').doc(bookId); const snapshot = await ref.get();
@@ -264,7 +364,7 @@ app.patch('/api/books/:bookId', authenticate, requireAdmin, async (req: Authenti
   if (updates.coverStoragePath) updates.coverStoragePath = safeStoragePath(updates.coverStoragePath);
   await ref.update(updates); return res.json({ success: true });
 });
-app.delete('/api/books/:bookId', authenticate, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+app.delete('/api/books/:bookId', authenticateOptional, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const bookId = safeBookId(req.params.bookId);
   if (!bookId) return res.status(400).json({ success: false, error: 'The book could not be identified.' });
   const ref = adminDb.collection('books').doc(bookId); const snapshot = await ref.get();
