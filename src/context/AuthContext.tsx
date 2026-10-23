@@ -278,6 +278,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Clear the restored Firebase user first so the Google chooser always opens.
       // The provider prompt below also prevents silent reuse of the last Google account.
       if (auth.currentUser) await signOut(auth);
+      const isMobileBrowser = /Android|iPhone|iPad|iPod/i.test(window.navigator.userAgent);
+      if (isMobileBrowser) {
+        // Mobile Chrome can leave the popup handler blank; a full-page redirect
+        // is Firebase's reliable mobile flow and still shows Google's chooser.
+        await signInWithRedirect(auth, googleProvider);
+        return { success: true };
+      }
       // Use the working Firebase consent popup so Google can show the account
       // chooser and ask the user to approve access to this app.
       const popupAttempt = signInWithPopup(auth, googleProvider);
