@@ -244,7 +244,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     }
 
-    getRedirectResult(auth).catch((err: any) => {
+    authPersistenceReady.then(() => getRedirectResult(auth)).catch((err: any) => {
       const errorRecord: AuthAttemptError = {
         code: err?.code || 'auth/unknown',
         message: err?.message || String(err || 'Unknown error'),
@@ -320,6 +320,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const code = String(err?.code || '').toLowerCase();
       if (code.includes('popup-blocked') || code.includes('network-request-failed')) {
         try {
+          // Redirect must wait for Firebase persistence; otherwise mobile
+          // browsers can return an invalid action from the Firebase handler.
+          await authPersistenceReady;
           await signInWithRedirect(auth, googleProvider);
           return { success: true };
         } catch (redirectErr: any) {
