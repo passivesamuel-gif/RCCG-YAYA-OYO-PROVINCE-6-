@@ -6,7 +6,6 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { FullPageLoader } from './components/ui/FullPageLoader';
-import { DebugPanel } from './components/DebugPanel';
 
 // Pages
 import { HomePage } from './pages/HomePage';
@@ -22,7 +21,7 @@ import { NotFoundPage } from './pages/NotFoundPage';
 
 
 const AppContent: React.FC = () => {
-  const { path, search } = useRouter();
+  const { path } = useRouter();
   const { loading: authLoading, user } = useAuth();
 
   const isReader = path.startsWith('/read/');
@@ -85,7 +84,6 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FAF8F2] text-[#252B2A]">
-      {new URLSearchParams(search).get('debug') === '1' && <DebugPanel />}
       <Navbar />
       <main className="flex-1">
         {renderCurrentView()}

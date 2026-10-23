@@ -11,15 +11,16 @@ export const LoginPage: React.FC = () => {
   const redirectTarget = new URLSearchParams(search).get('redirect') || (isAdmin ? '/admin' : '/library');
 
   useEffect(() => {
-    if (!loading && user) navigate(isAdmin ? '/admin' : redirectTarget === '/admin' ? '/library' : redirectTarget);
-  }, [loading, user, isAdmin, navigate, redirectTarget]);
+    if (!loading && user) navigate(redirectTarget);
+  }, [loading, user, navigate, redirectTarget]);
 
   const handleGoogleSignIn = async () => {
     setErrorMessage(null);
     setIsSubmitting(true);
     const result = await signInWithGoogle();
     setIsSubmitting(false);
-    if (!result.success) setErrorMessage(result.error || 'Google sign-in could not be completed. Please try again.');
+    if (result.success) navigate(redirectTarget);
+    else setErrorMessage(result.error || 'Google sign-in could not be completed. Please try again.');
   };
 
   return (
@@ -30,7 +31,7 @@ export const LoginPage: React.FC = () => {
           <img src="/assets/yaya-crest.png" alt="RCCG YAYA Crest" className="w-16 h-22 mx-auto object-contain" />
           <p className="text-[10px] font-heading font-semibold tracking-[0.2em] text-[#123D2A] uppercase">RCCG YAYA Oyo Province 6</p>
           <h1 className="font-heading font-extrabold text-2xl text-[#123D2A] tracking-tight">Continue with Google</h1>
-          <p className="text-xs text-[#737B76] leading-relaxed">Use your Google account to access the e-library. Approved Google accounts open the administrator dashboard automatically.</p>
+          <p className="text-xs text-[#737B76] leading-relaxed">Use your Google account to access the e-library. Approved Google accounts automatically receive administrator access.</p>
         </div>
         {errorMessage && (
           <div className="p-3.5 bg-[#FFF8F7] border border-[#E8C4BF] text-[#732522] text-xs rounded-xs flex items-start gap-2.5">

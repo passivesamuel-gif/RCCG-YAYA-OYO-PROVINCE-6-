@@ -8,7 +8,6 @@ import { getAuth as getAdminAuth, DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import multer from 'multer';
-import { describeAdminCheck } from './app/adminDiagnostics';
 
 dotenv.config();
 
@@ -51,9 +50,6 @@ interface SecuritySettings {
 }
 interface AuthenticatedRequest extends Request { firebaseUser?: DecodedIdToken; }
 
-const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
-const adminVerificationAttempts = new Map<string, { count: number; resetAt: number }>();
-
 function apiError(message: string, status = 400) {
   return resJson({ success: false, error: message }, status);
 }
@@ -94,35 +90,6 @@ function verifyAccessPassword(password: string, encoded: string): boolean {
   } catch { return false; }
 }
 
-function requestAddress(req: Request): string {
-  return String(req.ip || req.socket.remoteAddress || 'unknown');
-}
-function isApprovedAdmin(identity: DecodedIdToken, settings: SecuritySettings): boolean {
-  return identity.email_verified === true
-    && Boolean(identity.email)
-    && settings.approvedEmails.includes(identity.email!.trim().toLowerCase());
-}
-function hasActiveAdminSession(identity: DecodedIdToken): boolean {
-  return identity.admin === true
-    && Number.isSafeInteger(identity.adminSessionExpiresAt)
-    && Number(identity.adminSessionExpiresAt) > Date.now();
-}
-function recordAdminVerificationAttempt(req: Request, email: string): boolean {
-  const key = `${requestAddress(req)}:${email}`;
-  const now = Date.now();
-  const current = adminVerificationAttempts.get(key);
-  if (!current || current.resetAt <= now) {
-    adminVerificationAttempts.set(key, { count: 1, resetAt: now + 15 * 60 * 1000 });
-    return true;
-  }
-  if (current.count >= 5) return false;
-  current.count += 1;
-  return true;
-}
-function clearAdminVerificationAttempts(req: Request, email: string) {
-  adminVerificationAttempts.delete(`${requestAddress(req)}:${email}`);
-}
-
 async function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const header = req.header('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
@@ -133,7 +100,7 @@ async function authenticate(req: AuthenticatedRequest, res: Response, next: Next
 async function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   if (!req.firebaseUser?.email) return res.status(403).json({ success: false, error: 'You do not have permission to do that.' });
   const settings = await getSecuritySettings();
-  if (!isApprovedAdmin(req.firebaseUser, settings) || !hasActiveAdminSession(req.firebaseUser)) return res.status(403).json({ success: false, error: 'You do not have permission to do that.' });
+  if (!settings.approvedEmails.includes(req.firebaseUser.email.toLowerCase())) return res.status(403).json({ success: false, error: 'You do not have permission to do that.' });
   return next();
 }
 function safeStoragePath(value: unknown): string | null {
@@ -160,67 +127,20 @@ async function confirmStoredFile(storagePath: string, expectedSize: number) {
 
 app.use(express.json({ limit: '1mb' }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', app: 'RCCG YAYA OYO 6 E-Library' }));
-app.get('/api/admin/diagnostics', authenticate, async (req: AuthenticatedRequest, res) => {
-  res.set('Cache-Control', 'no-store');
-  if (req.query.debug !== '1') return res.status(404).json({ success: false, error: 'Not found.' });
-  try {
-    const settings = await getSecuritySettings();
-    const snapshot = await SECURITY_DOC.get();
-    return res.json({
-      success: true,
-      ...describeAdminCheck(req.firebaseUser!, settings.approvedEmails, snapshot.exists),
-      deployment: process.env.RENDER_GIT_COMMIT?.slice(0, 12) || 'Not reported by hosting',
-      configurationPresent: requiredEnvironment.every((name) => Boolean(process.env[name]?.trim())),
-    });
-  } catch {
-    return res.status(503).json({ success: false, error: 'The administrator check could not read the saved settings.' });
-  }
-});
 app.get('/api/admin/google-status', authenticate, async (req: AuthenticatedRequest, res) => {
+  const email = req.firebaseUser?.email?.toLowerCase() || '';
   const settings = await getSecuritySettings();
-  const approved = isApprovedAdmin(req.firebaseUser!, settings);
-  if (approved && !hasActiveAdminSession(req.firebaseUser!)) {
-    const currentUser = await adminAuth.getUser(req.firebaseUser!.uid);
-    await adminAuth.setCustomUserClaims(req.firebaseUser!.uid, {
-      ...(currentUser.customClaims || {}),
-      admin: true,
-      adminSessionExpiresAt: Date.now() + ADMIN_SESSION_TTL_MS,
-    });
-  }
-  try {
-    await adminDb.collection('users').doc(req.firebaseUser!.uid).set({
-      role: approved ? 'admin' : 'member',
-      updatedAt: Date.now(),
-    }, { merge: true });
-  } catch (error) {
-    console.error('Could not persist server-decided user role', { message: error instanceof Error ? error.message : 'unknown' });
-  }
-  return res.json({
-    success: true,
-    isAdmin: approved,
-    approved,
-    role: approved ? 'admin' : 'reader',
-    emailVerified: req.firebaseUser?.email_verified === true,
-  });
+  return res.json({ success: true, isAdmin: Boolean(email && settings.approvedEmails.includes(email)) });
 });
 
 app.post('/api/admin/verify-signin', authenticate, async (req: AuthenticatedRequest, res) => {
   const { email, accessPassword } = req.body || {};
   const settings = await getSecuritySettings();
   const signedInEmail = req.firebaseUser?.email?.toLowerCase() || '';
-  const attemptAllowed = recordAdminVerificationAttempt(req, signedInEmail);
-  const valid = Boolean(email && accessPassword && req.firebaseUser?.email_verified === true && signedInEmail === String(email).trim().toLowerCase() && settings.approvedEmails.includes(signedInEmail) && attemptAllowed && verifyAccessPassword(String(accessPassword), settings.accessPasswordHash));
-  if (!valid) {
+  if (!email || !accessPassword || signedInEmail !== String(email).trim().toLowerCase() || !settings.approvedEmails.includes(signedInEmail) || !verifyAccessPassword(String(accessPassword), settings.accessPasswordHash)) {
     console.warn('Admin verification failed', { email: signedInEmail, at: new Date().toISOString() });
     return res.status(401).json({ success: false, error: 'Administrator verification failed.' });
   }
-  clearAdminVerificationAttempts(req, signedInEmail);
-  const currentUser = await adminAuth.getUser(req.firebaseUser!.uid);
-  await adminAuth.setCustomUserClaims(req.firebaseUser!.uid, {
-    ...(currentUser.customClaims || {}),
-    admin: true,
-    adminSessionExpiresAt: Date.now() + ADMIN_SESSION_TTL_MS,
-  });
   console.info('Admin verification succeeded', { email: signedInEmail, at: new Date().toISOString() });
   return res.json({ success: true, verified: true });
 });

@@ -30,11 +30,9 @@ export interface AuthContextType {
   isAdmin: boolean;
   adminEmailConfigured: string;
   adminVerified: boolean;
-  adminTokenRefreshed: boolean;
   userFirstName: string;
   lastAuthAttemptError: AuthAttemptError | null;
-  lastAdminCheck: { status: number; success: boolean; isAdmin: boolean; message: string } | null;
-  signInWithGoogle: () => Promise<{ success: boolean; approvedAdmin?: boolean; error?: string }>;
+  signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
   signInWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   signInAsAdmin: (
     email: string,
@@ -130,7 +128,7 @@ export const mapAuthError = (err: any): string => {
   }
 
   if (code.includes('network-request-failed')) {
-    return `Firebase sign-in failed (${err?.code || 'auth/network-request-failed'}): ${rawMsg || 'Network connection error.'}`;
+    return 'Network connection error. Please verify your internet connection or check if this domain is authorized in Firebase.';
   }
 
   if (code.includes('timeout')) {
@@ -146,7 +144,7 @@ export const mapAuthError = (err: any): string => {
     return cleaned;
   }
 
-  return `Firebase sign-in failed (${err?.code || 'auth/unknown'}): ${rawMsg || "We couldn't complete your request."}`;
+  return "We couldn't complete your request. Please check your details and try again.";
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -155,39 +153,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState<boolean>(true);
   const [lastAuthAttemptError, setLastAuthAttemptError] = useState<AuthAttemptError | null>(null);
 
-  const [lastAdminCheck, setLastAdminCheck] = useState<AuthContextType['lastAdminCheck']>(null);
   const [adminVerified, setAdminVerified] = useState<boolean>(false);
-  const [adminTokenRefreshed, setAdminTokenRefreshed] = useState<boolean>(false);
 
-  const refreshGoogleAdminStatus = async (): Promise<boolean> => {
-    const response = await safeFetch<{ isAdmin?: boolean; approved?: boolean; role?: 'admin' | 'reader' }>('/api/admin/google-status');
+  const refreshGoogleAdminStatus = async () => {
+    const response = await safeFetch<{ isAdmin?: boolean }>('/api/admin/google-status');
     setAdminVerified(Boolean(response.success && response.data?.isAdmin));
-    if (response.success && response.data?.role) {
-      setProfile((previous) => previous ? {
-        ...previous,
-        role: response.data?.role === 'admin' ? 'admin' : 'member',
-      } : previous);
-    }
-    if (response.success && response.data?.isAdmin) {
-      await auth.currentUser?.getIdToken(true);
-      setAdminTokenRefreshed(true);
-      if (auth.currentUser) setUser({ ...auth.currentUser });
-    }
-    setLastAdminCheck({
-      status: response.status ?? 0,
-      success: response.success,
-      isAdmin: response.data?.isAdmin === true,
-      message: response.success
-        ? (response.data?.isAdmin ? 'The server returned administrator: yes.' : 'The server returned administrator: no.')
-        : response.error || 'The administrator check did not complete.',
-    });
-    return Boolean(response.success && response.data?.approved);
   };
 
   // Sync Firebase Auth state
   useEffect(() => {
     let unsubscribe: () => void = () => {};
-    const startupFallback = window.setTimeout(() => setLoading(false), 5000);
 
     try {
       unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -239,10 +214,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else {
           setProfile(null);
           setAdminVerified(false);
-          setLastAdminCheck(null);
         }
 
-        window.clearTimeout(startupFallback);
         setLoading(false);
       });
     } catch (e) {
@@ -251,20 +224,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     getRedirectResult(auth).catch((err: any) => {
-        const errorRecord: AuthAttemptError = {
-          code: err?.code || 'auth/unknown',
-          message: err?.message || String(err || 'Unknown error'),
-          timestamp: Date.now(),
-          type: 'google',
-        };
-        setLastAuthAttemptError(errorRecord);
-        console.error('[Auth Diagnostic - GOOGLE REDIRECT]', errorRecord);
-      });
+      const errorRecord: AuthAttemptError = {
+        code: err?.code || 'auth/unknown',
+        message: err?.message || String(err || 'Unknown error'),
+        timestamp: Date.now(),
+        type: 'google',
+      };
+      setLastAuthAttemptError(errorRecord);
+      console.error('[Auth Diagnostic - GOOGLE REDIRECT]', errorRecord);
+    });
 
-    return () => {
-      window.clearTimeout(startupFallback);
-      unsubscribe();
-    };
+    return () => unsubscribe();
   }, []);
 
   const recordAuthError = (err: any, type: AuthAttemptError['type']) => {
@@ -379,9 +349,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
-      await auth.currentUser?.getIdToken(true);
-      if (auth.currentUser) setUser({ ...auth.currentUser });
-      setAdminTokenRefreshed(true);
       setAdminVerified(true);
 
       setLastAuthAttemptError(null);
@@ -410,9 +377,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (res.success && res.data?.verified) {
-        await auth.currentUser?.getIdToken(true);
-        if (auth.currentUser) setUser({ ...auth.currentUser });
-        setAdminTokenRefreshed(true);
         setAdminVerified(true);
 
         return { success: true };
@@ -588,7 +552,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setProfile(null);
       setAdminVerified(false);
-      setAdminTokenRefreshed(false);
     } catch (err) {
       console.error('Error signing out:', err);
     }
@@ -610,10 +573,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAdmin,
         adminEmailConfigured: '',
         adminVerified,
-        adminTokenRefreshed,
         userFirstName,
         lastAuthAttemptError,
-        lastAdminCheck,
         signInWithGoogle,
         signInWithEmail,
         signInAsAdmin,
