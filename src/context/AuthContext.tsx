@@ -30,10 +30,11 @@ export interface AuthContextType {
   isAdmin: boolean;
   adminEmailConfigured: string;
   adminVerified: boolean;
+  adminTokenRefreshed: boolean;
   userFirstName: string;
   lastAuthAttemptError: AuthAttemptError | null;
   lastAdminCheck: { status: number; success: boolean; isAdmin: boolean; message: string } | null;
-  signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
+  signInWithGoogle: () => Promise<{ success: boolean; approvedAdmin?: boolean; error?: string }>;
   signInWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   signInAsAdmin: (
     email: string,
@@ -156,10 +157,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [lastAdminCheck, setLastAdminCheck] = useState<AuthContextType['lastAdminCheck']>(null);
   const [adminVerified, setAdminVerified] = useState<boolean>(false);
+  const [adminTokenRefreshed, setAdminTokenRefreshed] = useState<boolean>(false);
 
-  const refreshGoogleAdminStatus = async () => {
-    const response = await safeFetch<{ isAdmin?: boolean }>('/api/admin/google-status');
+  const refreshGoogleAdminStatus = async (): Promise<boolean> => {
+    const response = await safeFetch<{ isAdmin?: boolean; approved?: boolean }>('/api/admin/google-status');
     setAdminVerified(Boolean(response.success && response.data?.isAdmin));
+    if (response.success && response.data?.isAdmin) {
+      await auth.currentUser?.getIdToken(true);
+      setAdminTokenRefreshed(true);
+      if (auth.currentUser) setUser({ ...auth.currentUser });
+    }
     setLastAdminCheck({
       status: response.status ?? 0,
       success: response.success,
@@ -168,6 +175,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ? (response.data?.isAdmin ? 'The server returned administrator: yes.' : 'The server returned administrator: no.')
         : response.error || 'The administrator check did not complete.',
     });
+    return Boolean(response.success && response.data?.approved);
   };
 
   // Sync Firebase Auth state
@@ -179,6 +187,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(currentUser);
 
         if (currentUser) {
+          await currentUser.getIdToken(true);
+          setAdminTokenRefreshed(true);
           try {
             // Load user profile from Firestore: /users/{uid}
             const userRef = doc(db, 'users', currentUser.uid);
@@ -296,10 +306,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('Firestore profile write notice:', err);
       }
 
-      await refreshGoogleAdminStatus();
+      const approvedAdmin = await refreshGoogleAdminStatus();
 
       setLastAuthAttemptError(null);
-      return { success: true };
+      return { success: true, approvedAdmin };
     } catch (err: any) {
       const code = String(err?.code || '').toLowerCase();
       if (code.includes('popup-blocked') || code.includes('network-request-failed')) {
@@ -360,6 +370,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
+      await auth.currentUser?.getIdToken(true);
+      if (auth.currentUser) setUser({ ...auth.currentUser });
+      setAdminTokenRefreshed(true);
       setAdminVerified(true);
 
       setLastAuthAttemptError(null);
@@ -388,6 +401,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (res.success && res.data?.verified) {
+        await auth.currentUser?.getIdToken(true);
+        if (auth.currentUser) setUser({ ...auth.currentUser });
+        setAdminTokenRefreshed(true);
         setAdminVerified(true);
 
         return { success: true };
@@ -563,6 +579,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setProfile(null);
       setAdminVerified(false);
+      setAdminTokenRefreshed(false);
     } catch (err) {
       console.error('Error signing out:', err);
     }
@@ -584,6 +601,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAdmin,
         adminEmailConfigured: '',
         adminVerified,
+        adminTokenRefreshed,
         userFirstName,
         lastAuthAttemptError,
         lastAdminCheck,

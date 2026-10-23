@@ -17,7 +17,7 @@ interface AdminDiagnostic {
 }
 
 export const DebugPanel: React.FC = () => {
-  const { user, isAdmin, lastAdminCheck } = useAuth();
+  const { user, isAdmin, adminTokenRefreshed, lastAdminCheck } = useAuth();
   const { lastUploadError } = useLibrary();
   const [response, setResponse] = useState<ApiResponse<AdminDiagnostic> | null>(null);
   const [checking, setChecking] = useState(false);
@@ -42,7 +42,7 @@ export const DebugPanel: React.FC = () => {
     ['Server found this email on the approved list', yesNo(details?.approvedEmail)],
     ['Administrator session exists', yesNo(details?.adminSessionExists)],
     ['Administrator claim exists', yesNo(details?.adminClaimExists)],
-    ['Browser explicitly refreshed the sign-in token', 'No — the current sign-in code does not request a fresh token.'],
+    ['Browser explicitly refreshed the sign-in token', yesNo(adminTokenRefreshed)],
     ['Exact sign-in administrator check', lastAdminCheck ? `${lastAdminCheck.message} HTTP ${lastAdminCheck.status}.` : 'Not completed in this browser session.'],
     ['Current server check', checking ? 'Checking…' : details?.result || response?.error || 'Sign in to check.'],
     ['Diagnostic request result', response ? `HTTP ${response.status ?? 0}; ${response.success ? 'completed' : 'failed'}` : 'Not completed'],

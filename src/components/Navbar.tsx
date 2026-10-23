@@ -63,7 +63,7 @@ export const Navbar: React.FC = () => {
                   Library
                 </button>
 
-                <button
+                {!isAdmin && <button
                   onClick={() => navigate('/dashboard')}
                   className={`py-1.5 transition-colors hover:text-[#123D2A] cursor-pointer ${
                     path === '/dashboard'
@@ -72,7 +72,7 @@ export const Navbar: React.FC = () => {
                   }`}
                 >
                   My Reading
-                </button>
+                </button>}
 
                 <button
                   onClick={() => navigate('/profile')}
@@ -158,7 +158,7 @@ export const Navbar: React.FC = () => {
               >
                 Library
               </button>
-              <button
+              {!isAdmin && <button
                 onClick={() => {
                   navigate('/dashboard');
                   setMobileMenuOpen(false);
@@ -168,7 +168,7 @@ export const Navbar: React.FC = () => {
                 }`}
               >
                 My Reading
-              </button>
+              </button>}
               <button
                 onClick={() => {
                   navigate('/profile');

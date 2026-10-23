@@ -27,11 +27,17 @@ test('missing email is never approved', () => {
   assert.equal(describeAdminCheck({}, [''], false).approvedEmail, false);
 });
 
-test('unverified email remains visible as unverified even when old server check allows it', () => {
+test('unverified email is listed but not eligible for administrator access', () => {
   const result = describeAdminCheck({ email: approved[0], email_verified: false }, approved, false);
   assert.equal(result.emailVerified, false);
   assert.equal(result.approvedEmail, true);
-  assert.match(result.result, /does not yet require email verification/);
+  assert.match(result.result, /not verified/);
+});
+
+test('only an unexpired server claim counts as an administrator session', () => {
+  const result = describeAdminCheck({ email: approved[0], email_verified: true, admin: true, adminSessionExpiresAt: Date.now() + 60_000 }, approved, true);
+  assert.equal(result.approvedEmail, true);
+  assert.equal(result.adminSessionExists, true);
 });
 
 test('does not conceal whitespace errors in saved settings', () => {
