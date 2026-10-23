@@ -274,9 +274,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithGoogle = async () => {
     try {
-      await authPersistenceReady;
       // Popup returns the completed Firebase credential directly, avoiding the
       // mobile redirect callback loop seen on some Render/Firebase combinations.
+      // Do not await persistence here: waiting first can lose the mobile
+      // browser's user gesture and cause the popup to be rejected as a network
+      // error. Persistence is initialized at module load and can finish while
+      // Firebase opens the chooser.
       const result = await signInWithPopup(auth, googleProvider);
       const currentUser = result.user;
 
