@@ -256,6 +256,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithGoogle = async () => {
     try {
+      // Trusted Web Activity/standalone mode should use Firebase's redirect flow.
+      // Popup auth opens a separate browser surface on Android, while redirect
+      // auth returns through the same verified app origin and preserves the
+      // existing Firebase provider and session handling.
+      const isStandaloneApp =
+        window.matchMedia?.('(display-mode: standalone)').matches ||
+        (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+      if (isStandaloneApp) {
+        await authPersistenceReady;
+        await signInWithRedirect(auth, googleProvider);
+        return { success: true };
+      }
+
       // Popup returns the completed Firebase credential directly, avoiding the
       // mobile redirect callback loop seen on some Render/Firebase combinations.
       // This call must remain directly inside the button's user gesture; waiting

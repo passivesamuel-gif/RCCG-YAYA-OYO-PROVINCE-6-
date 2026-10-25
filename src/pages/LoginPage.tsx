@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, BookOpen, ExternalLink, Eye, EyeOff, KeyRound, Shield } from 'lucide-react';
+import { AlertCircle, BookOpen, Eye, EyeOff, KeyRound, Shield } from 'lucide-react';
 import { useRouter } from '../context/RouterContext';
 import { useAuth } from '../context/AuthContext';
 import { safeFetch } from '../lib/api';
@@ -89,7 +89,6 @@ export const LoginPage: React.FC = () => {
             <button type="button" onClick={() => { setIsAdminMode(true); setErrorMessage(null); }} className="w-full pt-3 border-t border-[#EEF5F0] text-xs font-semibold text-[#123D2A] hover:text-[#1A543A] cursor-pointer">Admin Login</button>
           </>
         )}
-        {!isAdminMode && <div className="pt-2 border-t border-[#EEF5F0] text-center"><button type="button" onClick={() => window.open(window.location.href, '_blank')} className="text-[11px] text-[#123D2A] font-semibold inline-flex items-center gap-1.5 cursor-pointer"><ExternalLink className="w-3.5 h-3.5" /> Open in a new tab</button></div>}
       </div>
     </div>
   );
