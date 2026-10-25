@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.rccgyayaoyo6.elibrary",
+      "sha256_cert_fingerprints": [
+        "E8:85:F1:C1:65:AF:CB:9C:E4:32:BC:B8:F4:2D:2E:B9:A4:8D:C6:B4:F2:7A:92:96:0C:46:85:66:1B:14:D0:0F"
+      ]
+    }
+  }
+]

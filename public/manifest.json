@@ -1,6 +1,6 @@
 {
-  "name": "RCCG YAYA OYO PROVINCE 6",
-  "short_name": "RCCG YAYA 6",
+  "name": "RCCG YAYA OYO 6",
+  "short_name": "RCCG YAYA OYO 6",
   "id": "rccg-yaya-oyo-province-6",
   "description": "The official digital library application of RCCG YAYA Oyo Province 6.",
   "start_url": "/",
@@ -10,12 +10,12 @@
   "theme_color": "#123D2A",
   "icons": [
     {
-      "src": "/assets/yaya-crest.png",
+      "src": "/icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/assets/yaya-crest.png",
+      "src": "/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png"
     }
